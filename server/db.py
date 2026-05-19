@@ -102,6 +102,11 @@ def get_database() -> AsyncIOMotorDatabase:
     return _db
 
 
+def get_db() -> AsyncIOMotorDatabase:
+    """Helper to retrieve the raw motor database."""
+    return get_database()
+
+
 db = Database(get_database())
 
 
