@@ -29,6 +29,7 @@ from routes import (
 )
 from routes.onboarding import router as onboarding_router
 from routes.factory import router as factory_router
+from routes.report_pdf import router as report_pdf_router
 from routes.alerts import dispatch_camera_offline_alert
 from services.auto_calibrator_job import run_auto_calibrator_loop
 from services.reid_worker import run_reid_worker_loop
@@ -129,6 +130,7 @@ app.include_router(training.router)
 app.include_router(report.router)
 app.include_router(onboarding_router)
 app.include_router(factory_router)
+app.include_router(report_pdf_router)
 
 
 @app.get("/health")
