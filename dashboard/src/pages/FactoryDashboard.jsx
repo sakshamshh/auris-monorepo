@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 
-const API_BASE = import.meta.env.VITE_API_URL || "https://auris.skymlabs.com";
+const IS_DEV = typeof window !== 'undefined' && (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1');
+const API_BASE = import.meta.env.VITE_API_URL || (IS_DEV ? 'http://localhost:8000' : 'https://auris.skymlabs.com');
 
 const fmt = (n) => n?.toLocaleString("en-IN") ?? "—";
 const fmtRs = (n) => n != null ? `₹${fmt(Math.round(n))}` : "—";

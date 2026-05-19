@@ -206,6 +206,23 @@ async def get_factory_config(request: Request):
     return config
 
 
+@router.get("/api/factory/configs")
+async def list_factory_configs(request: Request):
+    """
+    List all factory configurations.
+    Requires admin key.
+    """
+    require_admin_key(request)
+    raw_db = _get_raw_db()
+    cursor = raw_db.factory_config.find({})
+    configs = []
+    async for c in cursor:
+        if "_id" in c:
+            c["_id"] = str(c["_id"])
+        configs.append(c)
+    return {"configs": configs}
+
+
 @router.post("/api/factory/zones")
 async def upsert_zone(request: Request, body: ZoneConfigRequest):
     """

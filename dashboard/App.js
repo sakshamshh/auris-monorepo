@@ -7,6 +7,7 @@ import ReportScreen from "./src/screens/ReportScreen";
 import MapScreen from "./src/screens/MapScreen";
 import CalibrationScreen from "./src/screens/CalibrationScreen";
 import AdminScreen from "./src/screens/AdminScreen";
+import FactoryScreen from "./src/screens/FactoryScreen";
 
 export default function App() {
   const [store, setStore]       = useState(null);
@@ -52,6 +53,7 @@ export default function App() {
       case "map": return <MapScreen store={store} />;
       case "calibrate": return <CalibrationScreen store={store} />;
       case "report": return <ReportScreen store={store} />;
+      case "factory": return <FactoryScreen store={store} />;
       default: return <DashboardScreen store={store} onLogout={handleLogout} onAdmin={() => setShowAdmin(true)} />;
     }
   };
@@ -64,6 +66,7 @@ export default function App() {
         <TabBtn id="map" label="Map" icon="◎" tab={tab} setTab={setTab} />
         <TabBtn id="calibrate" label="Calibrate" icon="⊕" tab={tab} setTab={setTab} />
         <TabBtn id="report" label="Report" icon="≡" tab={tab} setTab={setTab} />
+        <TabBtn id="factory" label="Factory" icon="🏭" tab={tab} setTab={setTab} />
       </View>
     </View>
   );

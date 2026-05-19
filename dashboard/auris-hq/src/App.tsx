@@ -44,13 +44,16 @@ import {
   LayoutGrid
 } from 'lucide-react';
 
+import FactoryOnboarding from '../../../src/pages/FactoryOnboarding';
+import FactoryDashboard from '../../../src/pages/FactoryDashboard';
+
 // --- CONFIGURATION ---
 const IS_DEV = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
 const API_BASE = IS_DEV ? 'http://localhost:8000' : 'https://auris.skymlabs.com';
 const ADMIN_KEY = 'dcd62cb40e5fa0870d73c79fbd521d05';
 
 // --- TYPES ---
-type Tab = 'mission' | 'dashboard' | 'mapping' | 'calibration' | 'report' | 'training' | 'management';
+type Tab = 'mission' | 'dashboard' | 'mapping' | 'calibration' | 'report' | 'training' | 'management' | 'factory' | 'factory_analytics';
 
 interface Store {
   store_id: string;
@@ -1001,6 +1004,263 @@ const ReportTab = ({ storeId, password }: { storeId: string; password?: string }
   );
 };
 
+// 7.5. TAB: FACTORY ONBOARDING & ENVIRONMENT MANAGEMENT
+const FactoryOnboardingView = ({ storeId: initialStoreId }: { storeId: string | null }) => {
+  const [stores, setStores] = useState<any[]>([]);
+  const [configs, setConfigs] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [isModalOpen, setIsModalOpen] = useState(false);
+  const [selectedOnboardStore, setSelectedOnboardStore] = useState('');
+  const [successMsg, setSuccessMsg] = useState('');
+  const [errorMsg, setErrorMsg] = useState('');
+
+  const fetchData = async () => {
+    setLoading(true);
+    try {
+      // 1. Fetch stores
+      const resStores = await fetch(`${API_BASE}/admin/stores`, {
+        headers: { 'X-Admin-Key': ADMIN_KEY }
+      });
+      const dataStores = await resStores.json();
+      
+      // Filter factory stores
+      const factoryStores = (dataStores.stores || []).filter((s: any) => 
+        s.store_id.includes('factory') || s.spatial_status === 'factory'
+      );
+      setStores(factoryStores);
+
+      // 2. Fetch configs
+      const resConfigs = await fetch(`${API_BASE}/api/factory/configs`, {
+        headers: { 'X-Admin-Key': ADMIN_KEY }
+      });
+      const dataConfigs = await resConfigs.json();
+      setConfigs(dataConfigs.configs || []);
+    } catch (e) {
+      console.error("Failed to load factory environment details:", e);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchData();
+  }, []);
+
+  const handleActivate = async (sid: string) => {
+    setErrorMsg('');
+    setSuccessMsg('');
+    try {
+      const res = await fetch(`${API_BASE}/api/factory/config`, {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Admin-Key': ADMIN_KEY
+        },
+        body: JSON.stringify({
+          store_id: sid,
+          status: 'live'
+        })
+      });
+      if (res.ok) {
+        setSuccessMsg(`Factory "${sid.toUpperCase()}" promoted to live environment!`);
+        fetchData();
+      } else {
+        const errData = await res.json();
+        setErrorMsg(errData.detail || "Failed to update factory status.");
+      }
+    } catch (e) {
+      setErrorMsg("Connection failure during promotion.");
+    }
+  };
+
+  const handleOpenOnboard = (sid: string = '') => {
+    setSelectedOnboardStore(sid);
+    setIsModalOpen(true);
+  };
+
+  const handleOnboardSubmit = () => {
+    setIsModalOpen(false);
+    setSuccessMsg(`Factory onboarding checklist submitted successfully for "${selectedOnboardStore.toUpperCase()}"!`);
+    fetchData();
+    setTimeout(() => setSuccessMsg(''), 5000);
+  };
+
+  // Helper to match config status
+  const getFactoryStatus = (sid: string) => {
+    const config = configs.find(c => c.store_id === sid);
+    return config ? config.status : 'un-onboarded';
+  };
+
+  return (
+    <div className="h-full p-12 max-w-6xl mx-auto overflow-y-auto custom-scrollbar relative">
+      <header className="flex justify-between items-end mb-12">
+        <div>
+          <h2 className="text-[10px] uppercase tracking-[0.4em] font-mono text-auris-cyan">AURIS PROVISIONING CORE</h2>
+          <h1 className="text-3xl font-display font-light mt-2 uppercase tracking-tight">Factory Onboarding</h1>
+        </div>
+        <button 
+          onClick={() => handleOpenOnboard('')}
+          className="relative overflow-hidden px-6 py-3 rounded font-display bg-gradient-to-r from-blue-600 to-auris-purple text-[10px] uppercase tracking-widest flex items-center gap-2"
+        >
+          <Plus className="w-4 h-4" /> Onboard New Factory
+        </button>
+      </header>
+
+      {successMsg && (
+        <div className="mb-6 p-4 rounded-xl bg-auris-cyan/10 border border-auris-cyan/35 text-xs font-mono text-auris-cyan flex justify-between items-center animate-in fade-in duration-300">
+          <span>{successMsg.toUpperCase()}</span>
+          <button onClick={() => setSuccessMsg('')} className="text-auris-cyan/60 hover:text-auris-cyan">✕</button>
+        </div>
+      )}
+
+      {errorMsg && (
+        <div className="mb-6 p-4 rounded-xl bg-red-500/10 border border-red-500/35 text-xs font-mono text-red-500 flex justify-between items-center animate-in fade-in duration-300">
+          <span>{errorMsg.toUpperCase()}</span>
+          <button onClick={() => setErrorMsg('')} className="text-red-500/60 hover:text-red-500">✕</button>
+        </div>
+      )}
+
+      {loading ? (
+        <div className="h-48 flex items-center justify-center font-mono text-xs text-white/40">
+          <RefreshCw className="w-6 h-6 animate-spin mr-3 text-auris-cyan" />
+          Synchronizing Industry Telemetry...
+        </div>
+      ) : stores.length === 0 ? (
+        <GlassCard className="p-8 text-center max-w-md mx-auto">
+          <LayoutGrid className="w-12 h-12 text-auris-cyan/40 mx-auto mb-4 animate-pulse" />
+          <h3 className="text-sm font-display uppercase tracking-widest text-white/90">No Factory Store Registered</h3>
+          <p className="text-[11px] text-white/40 mt-2">Provision a store containing "factory" in its ID inside the System Registry (Registry tab) first.</p>
+        </GlassCard>
+      ) : (
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+          {stores.map(s => {
+            const status = getFactoryStatus(s.store_id);
+            const isLive = status === 'live';
+            const isPending = status === 'pending';
+            const isUnOnboarded = status === 'un-onboarded';
+
+            return (
+              <GlassCard key={s.store_id} className="p-6 border-auris-border relative hover:bg-white/[0.02] transition-colors" glow={isLive}>
+                <div className="flex justify-between items-start mb-6">
+                  <div className="p-4 rounded-2xl bg-auris-cyan/10 text-auris-cyan border border-auris-cyan/30">
+                    <LayoutGrid className="w-6 h-6" />
+                  </div>
+                  <div className="text-right">
+                    <div className="text-[9px] font-mono text-white/30 uppercase tracking-widest mb-1">{s.store_id}</div>
+                    <span className={`inline-flex items-center px-2.5 py-0.5 rounded text-[8px] font-bold font-mono border uppercase tracking-wider
+                      ${isLive ? 'bg-auris-cyan/15 text-auris-cyan border-auris-cyan/35' : 
+                        isPending ? 'bg-auris-orange/15 text-auris-orange border-auris-orange/35' : 
+                        'bg-white/5 text-white/40 border-white/10'}`}>
+                      {status}
+                    </span>
+                  </div>
+                </div>
+
+                <h3 className="text-xl font-display font-medium mb-1">{s.store_name}</h3>
+                <p className="text-[10px] font-mono text-white/40 uppercase mb-6 flex items-center gap-1.5">
+                  <Globe className="w-3 h-3 text-white/20" /> Provisioned {s.created_at ? new Date(s.created_at).toLocaleDateString() : 'N/A'}
+                </p>
+
+                <div className="flex items-center justify-between border-t border-white/5 pt-6 mt-4">
+                  <div className="flex items-center gap-4">
+                    {isPending && (
+                      <button 
+                        onClick={() => handleActivate(s.store_id)}
+                        className="px-4 py-2 bg-gradient-to-r from-blue-600 to-auris-purple hover:opacity-90 rounded font-display font-medium text-[9px] uppercase tracking-widest transition-all"
+                      >
+                        Activate Factory
+                      </button>
+                    )}
+                    {isUnOnboarded && (
+                      <button 
+                        onClick={() => handleOpenOnboard(s.store_id)}
+                        className="px-4 py-2 bg-auris-cyan text-black hover:bg-auris-cyan/90 rounded font-display font-bold text-[9px] uppercase tracking-widest transition-all"
+                      >
+                        Configure Onboarding
+                      </button>
+                    )}
+                    {isLive && (
+                      <span className="text-[9px] font-mono text-auris-cyan flex items-center gap-2">
+                        <CheckCircle2 className="w-3.5 h-3.5" /> Environmental parameters synced
+                      </span>
+                    )}
+                  </div>
+                </div>
+              </GlassCard>
+            );
+          })}
+        </div>
+      )}
+
+      {/* Glass Provisioning Modal */}
+      <AnimatePresence>
+        {isModalOpen && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/85 backdrop-blur-md overflow-y-auto">
+            <motion.div 
+              initial={{ scale: 0.95, opacity: 0 }} 
+              animate={{ scale: 1, opacity: 1 }} 
+              exit={{ scale: 0.95, opacity: 0 }} 
+              className="w-full max-w-3xl p-6 glass rounded-3xl border border-auris-border bg-auris-card relative my-8"
+            >
+              <button 
+                onClick={() => setIsModalOpen(false)}
+                className="absolute top-6 right-6 text-white/40 hover:text-white z-50 p-2 glass rounded-full"
+              >
+                ✕
+              </button>
+
+              <h2 className="text-xl font-display font-semibold mb-2 uppercase tracking-wide">Factory Onboarding Checklist</h2>
+              <p className="text-[10px] text-white/45 mb-6 font-mono">ONBOARDING TELEMETRY SYSTEM PORTAL</p>
+
+              {/* Store Selection if not pre-locked */}
+              {!selectedOnboardStore ? (
+                <div className="mb-6 p-4 glass rounded-xl border-white/5 bg-black/25">
+                  <label className="block text-[9px] uppercase tracking-wider text-auris-cyan mb-2 font-mono">Select Factory Environment</label>
+                  <select 
+                    value={selectedOnboardStore} 
+                    onChange={e => setSelectedOnboardStore(e.target.value)}
+                    className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-xs focus:outline-none focus:border-auris-cyan/50 text-white font-mono"
+                  >
+                    <option value="" disabled className="bg-[#111] text-white/40">-- SELECT A PROVISIONED ENVIRONMENT --</option>
+                    {stores
+                      .filter(s => getFactoryStatus(s.store_id) === 'un-onboarded')
+                      .map(s => (
+                        <option key={s.store_id} value={s.store_id} className="bg-[#111] text-white font-sans">
+                          {s.store_name} ({s.store_id})
+                        </option>
+                      ))}
+                  </select>
+                </div>
+              ) : (
+                <div className="mb-6 p-4 glass rounded-xl border-auris-cyan/15 bg-auris-cyan/5 flex justify-between items-center">
+                  <div>
+                    <div className="text-[8px] font-mono text-auris-cyan uppercase tracking-widest">SELECTED ENVIRONMENT</div>
+                    <div className="text-md font-display text-white mt-0.5">
+                      {stores.find(s => s.store_id === selectedOnboardStore)?.store_name || selectedOnboardStore}
+                    </div>
+                  </div>
+                  <span className="text-[9px] font-mono bg-auris-cyan text-black px-2 py-0.5 rounded font-bold uppercase">{selectedOnboardStore}</span>
+                </div>
+              )}
+
+              {selectedOnboardStore ? (
+                <div className="max-h-[60vh] overflow-y-auto custom-scrollbar rounded-2xl">
+                  <FactoryOnboarding storeId={selectedOnboardStore} onSubmit={handleOnboardSubmit} />
+                </div>
+              ) : (
+                <div className="p-12 text-center border border-dashed border-white/10 rounded-2xl bg-black/10">
+                  <LayoutGrid className="w-8 h-8 text-white/20 mx-auto mb-3" />
+                  <p className="text-[11px] text-white/40">Select a provisioned factory environment from the dropdown above to launch the step-by-step onboarding matrix.</p>
+                </div>
+              )}
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+    </div>
+  );
+};
+
 // 8. TAB: REGISTRY (MANAGEMENT)
 const ManagementTab = ({ onSelectStore }: { onSelectStore: (id: string) => void }) => {
     const [stores, setStores] = useState<any[]>([]);
@@ -1297,6 +1557,22 @@ export default function App() {
   const [storeId, setStoreId] = useState<string | null>(null);
   const [password, setPassword] = useState<string>('');
   const [storeName, setStoreName] = useState<string>('');
+  const [factoryConfigs, setFactoryConfigs] = useState<any[]>([]);
+
+  useEffect(() => {
+    if (storeId) {
+      fetch(`${API_BASE}/api/factory/configs`, {
+        headers: { 'X-Admin-Key': ADMIN_KEY }
+      })
+      .then(res => res.json())
+      .then(data => {
+        if (data && data.configs) {
+          setFactoryConfigs(data.configs);
+        }
+      })
+      .catch(err => console.error("Error loading factory configs in App:", err));
+    }
+  }, [storeId, activeTab]);
 
   const handleSelectStore = (id: string) => {
     setStoreId(id);
@@ -1329,6 +1605,8 @@ export default function App() {
            <NavButton active={activeTab === 'calibration'} onClick={() => setActiveTab('calibration')} icon={<RotateCw />} label="Calibration" />
            <NavButton active={activeTab === 'report'} onClick={() => setActiveTab('report')} icon={<FileText />} label="Intelligence" />
            <NavButton active={activeTab === 'training'} onClick={() => setActiveTab('training')} icon={<Cpu />} label="Training" />
+           <NavButton active={activeTab === 'factory'} onClick={() => setActiveTab('factory')} icon={<LayoutGrid />} label="Factory" />
+           <NavButton active={activeTab === 'factory_analytics'} onClick={() => setActiveTab('factory_analytics')} icon={<TrendingUp />} label="Analytics" />
            <NavButton active={activeTab === 'management'} onClick={() => setActiveTab('management')} icon={<Settings />} label="Registry" />
         </div>
 
@@ -1354,6 +1632,33 @@ export default function App() {
             {activeTab === 'calibration' && <CalibrationTab storeId={storeId} password={password} />}
             {activeTab === 'report' && <ReportTab storeId={storeId} password={password} />}
             {activeTab === 'training' && <TrainingTab />}
+            {activeTab === 'factory' && <FactoryOnboardingView storeId={storeId} />}
+            {activeTab === 'factory_analytics' && (
+              storeId ? (
+                (() => {
+                  const factory = factoryConfigs.find((f: any) => f.store_id === storeId);
+                  const trialDay = factory?.trial_start 
+                    ? Math.floor((Date.now() - new Date(factory.trial_start).getTime()) / 86400000) + 1 
+                    : 1;
+                  return (
+                    <FactoryDashboard 
+                      storeId={storeId} 
+                      password={password} 
+                      factoryName={storeName} 
+                      trialDay={trialDay} 
+                    />
+                  );
+                })()
+              ) : (
+                <div className="h-full flex items-center justify-center p-12">
+                  <GlassCard className="p-8 text-center max-w-md">
+                    <AlertTriangle className="w-12 h-12 text-auris-orange mx-auto mb-4 animate-pulse" />
+                    <h3 className="text-sm font-display uppercase tracking-widest text-white/90">Select Store First</h3>
+                    <p className="text-[11px] text-white/45 mt-2">Go to Overwatch and select a store from Mission Control first.</p>
+                  </GlassCard>
+                </div>
+              )
+            )}
             {activeTab === 'management' && <ManagementTab onSelectStore={handleSelectStore} />}
           </motion.div>
         </AnimatePresence>

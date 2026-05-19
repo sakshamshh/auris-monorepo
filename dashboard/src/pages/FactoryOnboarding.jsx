@@ -1,6 +1,7 @@
 import { useState } from "react";
 
-const API_BASE = import.meta.env.VITE_API_URL || "https://auris.skymlabs.com";
+const IS_DEV = typeof window !== 'undefined' && (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1');
+const API_BASE = import.meta.env.VITE_API_URL || (IS_DEV ? 'http://localhost:8000' : 'https://auris.skymlabs.com');
 
 const defaultShift = () => ({
   label: "",
@@ -31,7 +32,7 @@ const STEP_NAMES = [
   "WhatsApp & Submit",
 ];
 
-export default function FactoryOnboarding({ onSubmit }) {
+export default function FactoryOnboarding({ storeId, onSubmit }) {
   const [step, setStep] = useState(1);
   const [formData, setFormData] = useState(defaultForm);
   const [error, setError] = useState("");
@@ -139,6 +140,8 @@ export default function FactoryOnboarding({ onSubmit }) {
         },
         body: JSON.stringify({
           ...formData,
+          store_id: storeId,
+          factory_name: formData.factoryName,
           floorPlan: undefined,
         }),
       });
