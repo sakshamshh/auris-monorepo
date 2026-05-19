@@ -1,0 +1,11 @@
+[Unit]
+Description=Auris Bottleneck Aggregator Timer
+After=network.target
+
+[Timer]
+OnCalendar=*-*-* 01:00:00 UTC
+Persistent=true
+Unit=auris-bottleneck.service
+
+[Install]
+WantedBy=timers.target

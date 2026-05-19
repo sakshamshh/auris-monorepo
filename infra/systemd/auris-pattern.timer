@@ -1,0 +1,11 @@
+[Unit]
+Description=Auris Pattern Aggregator Timer
+After=network.target
+
+[Timer]
+OnCalendar=*-*-* 00:30:00 UTC
+Persistent=true
+Unit=auris-pattern.service
+
+[Install]
+WantedBy=timers.target
