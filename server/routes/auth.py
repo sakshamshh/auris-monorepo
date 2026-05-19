@@ -19,4 +19,6 @@ async def login(body: LoginRequest):
     return {
         "store_id": store["store_id"],
         "store_name": store.get("store_name", store["store_id"]),
+        "plan": store.get("plan", "retail"),
+        "created_at": store.get("created_at"),
     }

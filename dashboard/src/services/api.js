@@ -25,20 +25,26 @@ export const login = async (store_id, password) => {
   await storage.set('store_id', store_id);
   await storage.set('password', password);
   await storage.set('store_name', res.data.store_name);
-  return res.data;
+  if (res.data.plan) { await storage.set('plan', res.data.plan); }
+  if (res.data.created_at) { await storage.set('created_at', res.data.created_at); }
+  return { ...res.data, password };
 };
 
 export const logout = async () => {
   await storage.delete('store_id');
   await storage.delete('password');
   await storage.delete('store_name');
+  await storage.delete('plan');
+  await storage.delete('created_at');
 };
 
 export const getSavedCredentials = async () => {
   const store_id = await storage.get('store_id');
   const password = await storage.get('password');
   const store_name = await storage.get('store_name');
-  return store_id && password ? { store_id, password, store_name } : null;
+  const plan = await storage.get('plan');
+  const created_at = await storage.get('created_at');
+  return store_id && password ? { store_id, password, store_name, plan: plan || 'retail', created_at } : null;
 };
 
 const authHeaders = (store_id, password) => ({
@@ -170,6 +176,50 @@ export const reviewHardCase = async (adminKey, case_id, action) => {
 export const fetchTrainingStats = async (adminKey) => {
   const res = await api.get('/api/training/stats', {
     headers: { 'X-Admin-Key': adminKey },
+  });
+  return res.data;
+};
+
+// Factory and Retail API Integrations
+export const fetchDeadtime = async (store_id, password, from_date, to_date, shift_id) => {
+  const res = await api.get('/api/factory/deadtime', {
+    headers: authHeaders(store_id, password),
+    params: { from_date, to_date, shift_id },
+  });
+  return res.data;
+};
+
+export const fetchBottleneck = async (store_id, password) => {
+  const res = await api.get('/api/factory/bottleneck', {
+    headers: authHeaders(store_id, password),
+  });
+  return res.data;
+};
+
+export const fetchPatterns = async (store_id, password) => {
+  const res = await api.get('/api/factory/patterns', {
+    headers: authHeaders(store_id, password),
+  });
+  return res.data;
+};
+
+export const fetchRetailFootfall = async (store_id, password) => {
+  const res = await api.get('/api/retail/footfall', {
+    headers: authHeaders(store_id, password),
+  });
+  return res.data;
+};
+
+export const fetchRetailFootfallHistory = async (store_id, password) => {
+  const res = await api.get('/api/retail/footfall/history', {
+    headers: authHeaders(store_id, password),
+  });
+  return res.data;
+};
+
+export const fetchRetailReport = async (store_id, password) => {
+  const res = await api.get('/api/retail/report', {
+    headers: authHeaders(store_id, password),
   });
   return res.data;
 };
