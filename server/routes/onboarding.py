@@ -108,18 +108,48 @@ async def onboard_factory(request: Request, body: OnboardRequest):
     """
     require_admin_key(request)
     
-    # Calculate average shift duration
+    # Calculate average shift duration in hours
     shifts_list = [s.model_dump() for s in body.shifts]
-    durations = [_calculate_shift_duration_hours(s) for s in shifts_list]
-    avg_duration = sum(durations) / len(durations) if durations else 8.0
+    shift_durations = []
+    for shift in shifts_list:
+        start_h, start_m = map(int, shift['startTime'].split(':'))
+        end_h, end_m = map(int, shift['endTime'].split(':'))
+        start_mins = start_h * 60 + start_m
+        end_mins = end_h * 60 + end_m
+        if end_mins <= start_mins:  # overnight shift
+            end_mins += 24 * 60
+        duration_hours = (end_mins - start_mins) / 60
+        shift_durations.append(duration_hours)
     
-    # Avoid division by zero
-    if avg_duration <= 0:
-        avg_duration = 8.0
+    avg_shift_hours = sum(shift_durations) / len(shift_durations) if shift_durations else 8.0
+    if avg_shift_hours == 0:
+        avg_shift_hours = 8.0
         
-    operator_hourly = body.operatorWage / avg_duration
-    supervisor_hourly = body.supervisorWage / avg_duration
-    contractor_hourly = body.contractorWage / avg_duration
+    operator_hourly = body.operatorWage / avg_shift_hours
+    supervisor_hourly = body.supervisorWage / avg_shift_hours
+    contractor_hourly = body.contractorWage / avg_shift_hours
+    
+    # Build worker_categories list
+    worker_categories = [
+        {
+            "category": "Operator",
+            "daily_wage_inr": body.operatorWage,
+            "hourly_wage_inr": round(body.operatorWage / avg_shift_hours, 2),
+            "minute_wage_inr": round(body.operatorWage / avg_shift_hours / 60, 4)
+        },
+        {
+            "category": "Supervisor", 
+            "daily_wage_inr": body.supervisorWage,
+            "hourly_wage_inr": round(body.supervisorWage / avg_shift_hours, 2),
+            "minute_wage_inr": round(body.supervisorWage / avg_shift_hours / 60, 4)
+        },
+        {
+            "category": "Contractor",
+            "daily_wage_inr": body.contractorWage,
+            "hourly_wage_inr": round(body.contractorWage / avg_shift_hours, 2),
+            "minute_wage_inr": round(body.contractorWage / avg_shift_hours / 60, 4)
+        }
+    ]
     
     raw_db = _get_raw_db()
     now_iso = datetime.now(timezone.utc).isoformat()
@@ -143,6 +173,7 @@ async def onboard_factory(request: Request, body: OnboardRequest):
             "operatorHourlyWage": operator_hourly,
             "supervisorHourlyWage": supervisor_hourly,
             "contractorHourlyWage": contractor_hourly,
+            "worker_categories": worker_categories,
             "status": "pending",
             "updated_at": now_iso,
         },
