@@ -1,0 +1,12 @@
+node_modules/
+.expo/
+dist/
+npm-debug.*
+*.jks
+*.p8
+*.p12
+*.key
+*.mobileprovision
+*.orig.*
+eas-build-pre-install.sh
+auris-hq/

@@ -1,0 +1,6 @@
+@echo off
+echo Starting Cloud Brain API...
+start "CLOUD API" cmd /k "color 0A && cd C:\Users\SAKSHAM\Auris\src && uvicorn cloud_api:app --port 8000"
+timeout /t 3
+echo Starting Factory Edge Node...
+start "EDGE DEVICE" cmd /k "color 0C && cd C:\Users\SAKSHAM\Auris\src && set CLOUD_ENDPOINT=http://127.0.0.1:8000/api/blobs && python main.py"

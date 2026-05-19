@@ -1,0 +1,6 @@
+{
+  "name": "AURIS",
+  "description": "Premium AI-powered spatial dashboard and floor-stitching calibration system with real-time telemetry.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

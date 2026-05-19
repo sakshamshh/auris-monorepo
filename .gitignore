@@ -1,0 +1,25 @@
+﻿# Python
+__pycache__/
+*.pyc
+*.pyo
+.env
+
+# Node
+node_modules/
+dist/
+.expo/
+
+# Databases
+*.db
+
+# Temp files
+temp_blobs/
+*.jpg
+*.jpeg
+
+# Models (too large)
+*.pt
+
+# OS
+.DS_Store
+Thumbs.db

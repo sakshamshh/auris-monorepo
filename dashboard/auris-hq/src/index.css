@@ -1,0 +1,70 @@
+@import "tailwindcss";
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Outfit:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
+
+@theme {
+  --color-auris-bg: hsl(240, 10%, 3.9%);
+  --color-auris-card: hsla(240, 10%, 10%, 0.65);
+  --color-auris-cyan: hsl(180, 100%, 50%);
+  --color-auris-purple: hsl(270, 100%, 60%);
+  --color-auris-orange: hsl(30, 100%, 50%);
+  --color-auris-border: hsla(240, 5%, 80%, 0.08);
+
+  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
+  --font-display: "Outfit", sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
+
+  @keyframes scanline {
+    0% { transform: translateY(-100%); }
+    100% { transform: translateY(100%); }
+  }
+
+  @keyframes radar-sweep {
+    0% { transform: rotate(0deg); }
+    100% { transform: rotate(360deg); }
+  }
+
+  @keyframes pulse-cyan {
+    0%, 100% { opacity: 1; filter: drop-shadow(0 0 5px hsl(180, 100%, 50%)); }
+    50% { opacity: 0.7; filter: drop-shadow(0 0 15px hsl(180, 100%, 50%)); }
+  }
+}
+
+@layer base {
+  body {
+    @apply bg-auris-bg text-white font-sans antialiased selection:bg-auris-cyan/30;
+  }
+
+  /* Custom Scrollbar for Sci-Fi Feel */
+  .custom-scrollbar::-webkit-scrollbar {
+    width: 4px;
+    height: 4px;
+  }
+  .custom-scrollbar::-webkit-scrollbar-track {
+    @apply bg-transparent;
+  }
+  .custom-scrollbar::-webkit-scrollbar-thumb {
+    @apply bg-auris-cyan/20 rounded-full hover:bg-auris-cyan/40 transition-colors;
+  }
+}
+
+@layer components {
+  .glass {
+    @apply bg-auris-card backdrop-blur-xl border border-auris-border;
+  }
+
+  .auris-button {
+    @apply relative overflow-hidden px-6 py-2 rounded font-display font-medium transition-all duration-300;
+  }
+
+  .auris-button-primary {
+    @apply bg-gradient-to-r from-blue-600 to-auris-purple hover:scale-105 active:scale-95 text-white;
+    box-shadow: 0 0 15px hsla(270, 100%, 60%, 0.3);
+  }
+
+  .scanline {
+    @apply absolute inset-0 pointer-events-none overflow-hidden opacity-5;
+    background: linear-gradient(to bottom, transparent, theme('colors.auris-cyan'), transparent);
+    height: 100px;
+    animation: scanline 8s linear infinite;
+  }
+}
