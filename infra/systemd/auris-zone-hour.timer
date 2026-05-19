@@ -1,0 +1,11 @@
+[Unit]
+Description=Auris Zone Hour Aggregator Timer
+After=network.target
+
+[Timer]
+OnCalendar=*-*-* *:05:00
+Persistent=true
+Unit=auris-zone-hour.service
+
+[Install]
+WantedBy=timers.target
