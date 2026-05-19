@@ -1,0 +1,16 @@
+[Unit]
+Description=Auris Telegram Daily Brief Service
+After=network.target
+
+[Service]
+Type=oneshot
+User=retailiq-key
+Group=retailiq-key
+WorkingDirectory=/home/retailiq-key/auris-server
+EnvironmentFile=/home/retailiq-key/auris-server/.env
+ExecStart=/usr/bin/python3 /home/retailiq-key/auris-server/routes/alerts.py
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

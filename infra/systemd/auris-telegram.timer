@@ -1,0 +1,11 @@
+[Unit]
+Description=Auris Telegram Daily Brief Timer
+After=network.target
+
+[Timer]
+OnCalendar=*-*-* 16:30:00 UTC
+Persistent=true
+Unit=auris-telegram.service
+
+[Install]
+WantedBy=timers.target
