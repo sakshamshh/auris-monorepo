@@ -22,8 +22,12 @@ logging.basicConfig(
 logger = logging.getLogger("AurisAggregator.bottleneck")
 
 # Database Connection Settings
-COSMOS_CONNECTION_STRING = os.getenv("COSMOS_CONNECTION_STRING") or os.getenv("MONGODB_URI") or os.getenv("MONGO_URI") or "mongodb://localhost:27017"
-DB_NAME = os.getenv("MONGODB_DB") or os.getenv("DB_NAME") or "auris"
+MONGO_URI = (
+    os.getenv('COSMOS_CONNECTION_STRING') or 
+    os.getenv('MONGO_URI') or 
+    'mongodb://localhost:27017'
+)
+DB_NAME = os.getenv('DB_NAME', 'auris')
 
 
 def _calculate_shift_duration_hours(shift: dict) -> float:
@@ -308,7 +312,7 @@ async def main():
     logger.info("Starting bottleneck aggregator run")
     client = None
     try:
-        client = AsyncIOMotorClient(COSMOS_CONNECTION_STRING)
+        client = AsyncIOMotorClient(MONGO_URI)
         db = client[DB_NAME]
         
         now = datetime.now(timezone.utc)

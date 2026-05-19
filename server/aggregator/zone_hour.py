@@ -21,8 +21,12 @@ logging.basicConfig(
 logger = logging.getLogger("AurisAggregator.zone_hour")
 
 # Database Connection Settings
-COSMOS_CONNECTION_STRING = os.getenv("COSMOS_CONNECTION_STRING") or os.getenv("MONGODB_URI") or os.getenv("MONGO_URI") or "mongodb://localhost:27017"
-DB_NAME = os.getenv("MONGODB_DB") or os.getenv("DB_NAME") or "auris"
+MONGO_URI = (
+    os.getenv('COSMOS_CONNECTION_STRING') or 
+    os.getenv('MONGO_URI') or 
+    'mongodb://localhost:27017'
+)
+DB_NAME = os.getenv('DB_NAME', 'auris')
 
 
 def _calculate_shift_duration_hours(shift: dict) -> float:
@@ -64,7 +68,8 @@ async def aggregate_zone_hour(db, factory: dict, zone: dict, hour_start: datetim
         "timestamp": {
             "$gte": hour_start_iso,
             "$lt": hour_end_iso
-        }
+        },
+        "zone_events.zone": zone_id
     }
     
     blobs_cursor = db.blobs.find(query)
@@ -72,45 +77,9 @@ async def aggregate_zone_hour(db, factory: dict, zone: dict, hour_start: datetim
     # 2. Extract person count values defensively from the retrieved blobs
     person_counts = []
     
-    async for blob in blobs_cursor:
-        # Check if the blob is zone-specific
-        blob_zone = blob.get("zone_id") or blob.get("zone")
-        if blob_zone and str(blob_zone) == str(zone_id):
-            val = blob.get("person_count") or blob.get("people_now")
-            if val is None:
-                counts = blob.get("counts")
-                if isinstance(counts, dict):
-                    val = counts.get("current")
-            if val is not None:
-                person_counts.append(float(val))
-                continue
-                
-        # Check for counts per zone inside the blob
-        zone_counts = blob.get("zone_counts")
-        if isinstance(zone_counts, dict) and zone_id in zone_counts:
-            person_counts.append(float(zone_counts[zone_id]))
-            continue
-            
-        # Check for tracks/people detections tagged with this zone
-        tracks = blob.get("tracks") or blob.get("people") or blob.get("detections")
-        if isinstance(tracks, list):
-            zone_people = 0
-            for t in tracks:
-                if isinstance(t, dict) and (t.get("zone_id") == zone_id or t.get("zone") == zone_id):
-                    zone_people += 1
-            person_counts.append(float(zone_people))
-            continue
-            
-        # General store-wide fallback if no zone-specific structure exists
-        val = blob.get("person_count") or blob.get("people_now")
-        if val is None:
-            counts = blob.get("counts")
-            if isinstance(counts, dict):
-                val = counts.get("current")
-        if val is not None:
-            person_counts.append(float(val))
-        else:
-            person_counts.append(0.0)
+    async for doc in blobs_cursor:
+        val = doc.get('person_count') or doc.get('count') or 0
+        person_counts.append(float(val))
             
     # 3. Perform calculations
     total_count = len(person_counts)
@@ -188,22 +157,23 @@ async def aggregate_zone_hour(db, factory: dict, zone: dict, hour_start: datetim
     bottleneck_flag = False
     
     # TTL and DateTime configurations
-    day_of_week = hour_start.weekday()  # 0 = Monday
-    hour_of_day = hour_start.hour
-    ttl = int(hour_start.timestamp()) + 7_776_000  # 90 days TTL
+    hour_bucket = hour_start
+    day_of_week = int(hour_bucket.weekday())  # 0 = Monday
+    hour_of_day = int(hour_bucket.hour)
+    ttl = int(hour_bucket.timestamp()) + 7_776_000  # 90 days TTL
     
     # 4. Upsert into zone_hour_agg
     await db.zone_hour_agg.update_one(
         {
             "store_id": store_id,
             "zone_id": zone_id,
-            "hour_bucket": hour_start
+            "hour_bucket": hour_bucket
         },
         {
             "$set": {
                 "store_id": store_id,
                 "zone_id": zone_id,
-                "hour_bucket": hour_start,
+                "hour_bucket": hour_bucket,
                 "hour_bucket_iso": hour_start_iso,
                 "day_of_week": day_of_week,
                 "hour_of_day": hour_of_day,
@@ -231,7 +201,7 @@ async def main():
     logger.info("Starting zone_hour aggregation run")
     client = None
     try:
-        client = AsyncIOMotorClient(COSMOS_CONNECTION_STRING)
+        client = AsyncIOMotorClient(MONGO_URI)
         db = client[DB_NAME]
         
         # Truncate current UTC time to the hour
