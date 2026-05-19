@@ -44,8 +44,9 @@ import {
   LayoutGrid
 } from 'lucide-react';
 
-import FactoryOnboarding from '../../../src/pages/FactoryOnboarding';
-import FactoryDashboard from '../../../src/pages/FactoryDashboard';
+import FactoryOnboarding from '../../src/pages/FactoryOnboarding';
+import FactoryDashboard from '../../src/pages/FactoryDashboard';
+import { useDropzone } from 'react-dropzone';
 
 // --- CONFIGURATION ---
 const IS_DEV = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
@@ -149,13 +150,13 @@ const MissionControlTab = ({ onSelectStore }: { onSelectStore: (id: string) => v
   }, []);
 
   return (
-    <div className="h-full flex flex-col p-8 overflow-y-auto custom-scrollbar">
-      <header className="flex justify-between items-end mb-12">
+    <div className="h-full flex flex-col p-4 md:p-8 overflow-y-auto custom-scrollbar">
+      <header className="flex flex-col md:flex-row justify-between items-start md:items-end mb-8 md:mb-12 gap-6 md:gap-4">
         <div>
           <h2 className="text-[10px] uppercase tracking-[0.4em] font-mono text-auris-cyan">AURIS GLOBAL OVERWATCH</h2>
           <h1 className="text-4xl font-display font-light mt-2 tracking-tight uppercase">Mission Control</h1>
         </div>
-        <div className="flex gap-6">
+        <div className="flex flex-col md:flex-row gap-4 md:gap-6 w-full md:w-auto">
           <MetricCard label="Total Live Presence" value={globalStats.tracks} unit="PEOPLE" icon={<Users className="w-3 h-3 text-auris-cyan" />} cyan />
           <MetricCard label="Active Nodes" value={globalStats.cameras} unit="DEVICES" icon={<Camera className="w-3 h-3" />} />
           <MetricCard label="System Health" value="OPTIMAL" unit="" trend="NOMINAL" icon={<Activity className="w-3 h-3" />} />
@@ -1092,15 +1093,15 @@ const FactoryOnboardingView = ({ storeId: initialStoreId }: { storeId: string | 
   };
 
   return (
-    <div className="h-full p-12 max-w-6xl mx-auto overflow-y-auto custom-scrollbar relative">
-      <header className="flex justify-between items-end mb-12">
+    <div className="h-full p-4 md:p-12 max-w-6xl mx-auto overflow-y-auto custom-scrollbar relative">
+      <header className="flex flex-col md:flex-row justify-between items-start md:items-end mb-8 md:mb-12 gap-4">
         <div>
           <h2 className="text-[10px] uppercase tracking-[0.4em] font-mono text-auris-cyan">AURIS PROVISIONING CORE</h2>
           <h1 className="text-3xl font-display font-light mt-2 uppercase tracking-tight">Factory Onboarding</h1>
         </div>
         <button 
           onClick={() => handleOpenOnboard('')}
-          className="relative overflow-hidden px-6 py-3 rounded font-display bg-gradient-to-r from-blue-600 to-auris-purple text-[10px] uppercase tracking-widest flex items-center gap-2"
+          className="relative overflow-hidden px-6 py-3 rounded font-display bg-gradient-to-r from-blue-600 to-auris-purple text-[10px] uppercase tracking-widest flex items-center gap-2 w-full md:w-auto justify-center"
         >
           <Plus className="w-4 h-4" /> Onboard New Factory
         </button>
@@ -1349,15 +1350,15 @@ const ManagementTab = ({ onSelectStore }: { onSelectStore: (id: string) => void 
     };
 
     return (
-        <div className="h-full p-12 max-w-6xl mx-auto overflow-y-auto custom-scrollbar relative">
-            <header className="flex justify-between items-center mb-12">
+        <div className="h-full p-4 md:p-12 max-w-6xl mx-auto overflow-y-auto custom-scrollbar relative">
+            <header className="flex flex-col md:flex-row justify-between items-start md:items-center mb-8 md:mb-12 gap-4">
                 <div>
                    <h2 className="text-[10px] uppercase tracking-[0.4em] font-mono text-auris-cyan">ADMINISTRATION ENGINE</h2>
                    <h1 className="text-3xl font-display font-light mt-2 uppercase tracking-tight">System Registry</h1>
                 </div>
                 <button 
                   onClick={() => setIsModalOpen(true)}
-                  className="relative overflow-hidden px-6 py-3 rounded font-display bg-gradient-to-r from-blue-600 to-auris-purple text-[10px] uppercase tracking-widest flex items-center gap-2"
+                  className="relative overflow-hidden px-6 py-3 rounded font-display bg-gradient-to-r from-blue-600 to-auris-purple text-[10px] uppercase tracking-widest flex items-center gap-2 w-full md:w-auto justify-center"
                 >
                     <Plus className="w-4 h-4" /> Provision New Environment
                 </button>
@@ -1371,9 +1372,9 @@ const ManagementTab = ({ onSelectStore }: { onSelectStore: (id: string) => void 
             ) : (
               <div className="grid grid-cols-1 gap-4">
                   {stores.map(s => (
-                      <GlassCard key={s.store_id} className="p-6 flex items-center justify-between hover:bg-white/[0.03] transition-colors border-auris-border">
-                          <div className="flex items-center gap-8">
-                              <div className={`p-4 rounded-2xl bg-auris-cyan/10 text-auris-cyan border-auris-cyan/30 border`}>
+                      <GlassCard key={s.store_id} className="p-6 flex flex-col md:flex-row items-start md:items-center justify-between hover:bg-white/[0.03] transition-colors border-auris-border gap-4">
+                          <div className="flex items-center gap-4 md:gap-8">
+                              <div className={`p-4 rounded-2xl bg-auris-cyan/10 text-auris-cyan border-auris-cyan/30 border flex-shrink-0`}>
                                   <Hexagon className="w-8 h-8" />
                               </div>
                               <div>
@@ -1388,8 +1389,8 @@ const ManagementTab = ({ onSelectStore }: { onSelectStore: (id: string) => void 
                               </div>
                           </div>
 
-                          <div className="flex items-center gap-12">
-                              <div className="text-right">
+                          <div className="flex items-center justify-between md:justify-end gap-6 md:gap-12 w-full md:w-auto">
+                              <div className="text-left md:text-right">
                                   <div className="text-[9px] uppercase text-white/30 mb-1">Status</div>
                                   <div className={`text-xs font-mono font-bold text-auris-cyan`}>
                                       ● LINK STEADY
@@ -1488,7 +1489,7 @@ const Login = ({ onLogin }: { onLogin: (s: string, p: string, name: string) => v
         </svg>
       </div>
 
-      <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="relative z-10 w-full max-w-md p-10 glass rounded-3xl">
+      <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="relative z-10 w-full max-w-md p-6 md:p-10 glass rounded-3xl mx-4 md:mx-0">
         <div className="flex flex-col items-center mb-10">
           <div className="relative mb-6">
             <motion.div animate={{ scale: [1, 1.2, 1], opacity: [0.3, 0.6, 0.3] }} transition={{ duration: 4, repeat: Infinity }} className="absolute inset-x-0 inset-y-0 bg-auris-cyan rounded-full blur-2xl" />
@@ -1593,7 +1594,7 @@ export default function App() {
   return (
     <div className="flex h-screen bg-auris-bg text-white overflow-hidden selection:bg-auris-cyan/30">
       {/* Sidebar Nav */}
-      <nav className="w-20 border-r border-white/5 flex flex-col items-center py-8 bg-black/40 backdrop-blur-3xl z-40">
+      <nav className="hidden md:flex w-20 border-r border-white/5 flex-col items-center py-8 bg-black/40 backdrop-blur-3xl z-40">
         <div className="p-3 bg-auris-cyan/10 rounded-2xl border border-auris-cyan/30 mb-12 shadow-[0_0_15px_rgba(0,255,255,0.15)] cursor-pointer">
           <Hexagon className="w-7 h-7 text-auris-cyan" />
         </div>
@@ -1616,7 +1617,7 @@ export default function App() {
       </nav>
 
       {/* Viewport */}
-      <main className="flex-1 overflow-hidden relative font-sans">
+      <main className="flex-1 overflow-hidden relative font-sans pb-20 md:pb-0">
         <AnimatePresence mode="wait">
           <motion.div
             key={activeTab}
@@ -1663,6 +1664,21 @@ export default function App() {
           </motion.div>
         </AnimatePresence>
       </main>
+
+      {/* Mobile Bottom Tab Bar */}
+      <nav className="flex md:hidden fixed bottom-0 left-0 right-0 h-20 z-50 bg-black/90 backdrop-blur-xl border-t border-white/10 overflow-x-auto custom-scrollbar">
+        <div className="flex w-full items-center justify-between px-2 py-1 min-w-max">
+          <MobileNavButton active={activeTab === 'mission'} onClick={() => setActiveTab('mission')} icon={<Globe />} label="Overwatch" />
+          <MobileNavButton active={activeTab === 'dashboard'} onClick={() => setActiveTab('dashboard')} icon={<LayoutDashboard />} label="Dashboard" />
+          <MobileNavButton active={activeTab === 'mapping'} onClick={() => setActiveTab('mapping')} icon={<Layers />} label="Mapping" />
+          <MobileNavButton active={activeTab === 'calibration'} onClick={() => setActiveTab('calibration')} icon={<RotateCw />} label="Calibration" />
+          <MobileNavButton active={activeTab === 'report'} onClick={() => setActiveTab('report')} icon={<FileText />} label="Intelligence" />
+          <MobileNavButton active={activeTab === 'training'} onClick={() => setActiveTab('training')} icon={<Cpu />} label="Training" />
+          <MobileNavButton active={activeTab === 'factory'} onClick={() => setActiveTab('factory')} icon={<LayoutGrid />} label="Factory" />
+          <MobileNavButton active={activeTab === 'factory_analytics'} onClick={() => setActiveTab('factory_analytics')} icon={<TrendingUp />} label="Analytics" />
+          <MobileNavButton active={activeTab === 'management'} onClick={() => setActiveTab('management')} icon={<Settings />} label="Registry" />
+        </div>
+      </nav>
     </div>
   );
 }
@@ -1680,6 +1696,18 @@ function NavButton({ active, onClick, icon, label }: any) {
       {active && (
         <motion.div layoutId="nav-glow" className="absolute inset-0 bg-auris-cyan/15 blur-xl rounded-2xl -z-10" />
       )}
+    </button>
+  );
+}
+
+function MobileNavButton({ active, onClick, icon, label }: any) {
+  return (
+    <button 
+      onClick={onClick}
+      className={`min-w-[64px] flex-shrink-0 flex flex-col items-center justify-center py-2 gap-1 transition-colors duration-300 ${active ? 'text-auris-cyan' : 'text-white/30'}`}
+    >
+      {React.cloneElement(icon, { className: "w-5 h-5" })}
+      <span className="text-[9px] font-medium tracking-tight font-display">{label}</span>
     </button>
   );
 }
