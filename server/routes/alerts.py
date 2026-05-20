@@ -12,6 +12,28 @@ from datetime import datetime, timezone, timedelta
 import httpx
 from motor.motor_asyncio import AsyncIOMotorClient
 from dotenv import load_dotenv
+from fastapi import APIRouter, HTTPException, Request
+
+router = APIRouter()
+
+
+@router.get("/api/whatsapp/logs")
+async def get_whatsapp_logs(request: Request, store_id: str = None):
+    from db import db, ADMIN_KEY
+    key = request.headers.get("X-Admin-Key", "")
+    if not ADMIN_KEY or key != ADMIN_KEY:
+        raise HTTPException(status_code=403, detail="Invalid admin key")
+    
+    query = {}
+    if store_id:
+        query["store_id"] = store_id
+        
+    logs = []
+    cursor = db._db.whatsapp_log.find(query).sort("sent_at", -1).limit(100)
+    async for doc in cursor:
+        doc["_id"] = str(doc["_id"])
+        logs.append(doc)
+    return {"logs": logs}
 
 # Setup logging
 logging.basicConfig(

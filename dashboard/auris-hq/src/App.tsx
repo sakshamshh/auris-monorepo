@@ -37,6 +37,11 @@ import {
   FileText,
   RefreshCw,
   Eye,
+  EyeOff,
+  Search,
+  Check,
+  Copy,
+  Play,
   ChevronRight,
   Database,
   AlertTriangle,
@@ -1262,189 +1267,1537 @@ const FactoryOnboardingView = ({ storeId: initialStoreId }: { storeId: string | 
   );
 };
 
-// 8. TAB: REGISTRY (MANAGEMENT)
+
+// --- CLIENT MANAGEMENT (REGISTRY) TAB ---
 const ManagementTab = ({ onSelectStore }: { onSelectStore: (id: string) => void }) => {
-    const [stores, setStores] = useState<any[]>([]);
-    const [loading, setLoading] = useState(true);
-    const [isModalOpen, setIsModalOpen] = useState(false);
+  const [clients, setClients] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [selectedClient, setSelectedClient] = useState<string | null>(null);
+  const [clientTab, setClientTab] = useState<'overview' | 'system' | 'zones' | 'analytics' | 'logs'>('overview');
+  const [searchQuery, setSearchQuery] = useState('');
+  
+  // Modal states
+  const [showAddModal, setShowAddModal] = useState(false);
+  const [addStep, setAddStep] = useState<1 | 2 | 3 | 4>(1);
+  const [addForm, setAddForm] = useState({
+    store_id: '',
+    store_name: '',
+    city: '',
+    plan: 'FACTORY', // 'FACTORY' | 'RETAIL' | 'PILOT'
+    password: '',
+    numShifts: 2,
+    shifts: [
+      { label: 'Day Shift', startTime: '09:00', endTime: '17:00', days: { Mon: true, Tue: true, Wed: true, Thu: true, Fri: true, Sat: true, Sun: false } },
+      { label: 'Night Shift', startTime: '17:00', endTime: '01:00', days: { Mon: true, Tue: true, Wed: true, Thu: true, Fri: true, Sat: true, Sun: false } }
+    ],
+    operatorWage: 120,
+    supervisorWage: 250,
+    contractorWage: 180,
+    whatsAppNumber: ''
+  });
+  
+  const [createdCredentials, setCreatedCredentials] = useState<any>(null);
+  const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
 
-    // Modal forms
-    const [newId, setNewId] = useState('');
-    const [newName, setNewName] = useState('');
-    const [newPass, setNewPass] = useState('');
-    const [modalError, setModalError] = useState('');
+  // Tab detailed states
+  const [detailedStore, setDetailedStore] = useState<any>(null);
+  const [deadTimeLoss, setDeadTimeLoss] = useState<any>(null);
+  const [zones, setZones] = useState<any[]>([]);
+  const [whatsappLogs, setWhatsappLogs] = useState<any[]>([]);
+  const [retailFootfall, setRetailFootfall] = useState<any>(null);
+  const [revealKey, setRevealKey] = useState(false);
+  
+  // Password reset state
+  const [newPassword, setNewPassword] = useState('');
+  const [resettingPassword, setResettingPassword] = useState(false);
 
-    const fetchStores = async () => {
+  const showToast = (message: string, type: 'success' | 'error') => {
+    setToast({ message, type });
+    setTimeout(() => {
+      setToast(null);
+    }, 3000);
+  };
+
+  const fetchClients = async () => {
+    setLoading(true);
+    try {
+      const storesRes = await fetch(`${API_BASE}/admin/stores`, {
+        headers: { 'X-Admin-Key': ADMIN_KEY }
+      });
+      if (!storesRes.ok) throw new Error("Failed to load stores");
+      const storesData = await storesRes.json();
+      
+      let configsData = { configs: [] };
       try {
-        const res = await fetch(`${API_BASE}/admin/stores`, {
+        const configsRes = await fetch(`${API_BASE}/api/factory/configs`, {
           headers: { 'X-Admin-Key': ADMIN_KEY }
         });
-        const data = await res.json();
-        if (data && Array.isArray(data.stores)) {
-          setStores(data.stores.map((s: any) => ({
-            store_id: s.store_id,
-            store_name: s.store_name || s.store_id,
-            status: 'online',
-            cameras_count: s.cameras_count || 4,
-            calibrated: true,
-            plan: s.store_id.includes('factory') ? 'factory' : 'retail'
-          })));
+        if (configsRes.ok) {
+          configsData = await configsRes.json();
         }
-      } catch (e) {
-        console.error(e);
-      } finally {
-        setLoading(false);
+      } catch (err) {
+        console.error("Failed to load factory configs", err);
       }
-    };
+      
+      const merged = (storesData.stores || []).map((store: any) => {
+        const config = configsData.configs.find((c: any) => c.store_id === store.store_id);
+        return {
+          ...store,
+          plan: config ? 'FACTORY' : (store.store_id.includes('retail') ? 'RETAIL' : 'PILOT'),
+          status: config ? config.status : 'live',
+          factoryConfig: config || null
+        };
+      });
+      
+      setClients(merged);
+    } catch (error: any) {
+      showToast(error.message || "Failed to load clients index", 'error');
+    } finally {
+      setLoading(false);
+    }
+  };
 
-    useEffect(() => {
-      fetchStores();
-    }, []);
+  useEffect(() => {
+    fetchClients();
+  }, []);
 
-    const handleDelete = async (sid: string) => {
-      if (!confirm(`Are you absolutely sure you want to de-provision client node "${sid}"? This will purge all spatial maps and telemetry.`)) return;
+  useEffect(() => {
+    if (!selectedClient) {
+      setDetailedStore(null);
+      setDeadTimeLoss(null);
+      setZones([]);
+      setWhatsappLogs([]);
+      setRetailFootfall(null);
+      setRevealKey(false);
+      return;
+    }
+    
+    const fetchStoreDetails = async () => {
       try {
-        const res = await fetch(`${API_BASE}/admin/stores/${sid}`, {
-          method: 'DELETE',
+        const res = await fetch(`${API_BASE}/admin/stores/${selectedClient}`, {
           headers: { 'X-Admin-Key': ADMIN_KEY }
         });
         if (res.ok) {
-          fetchStores();
+          const data = await res.json();
+          setDetailedStore(data);
         }
-      } catch (e) {
-        console.error(e);
+      } catch (err) {
+        console.error("Failed to load store details", err);
       }
     };
-
-    const handleProvision = async () => {
-      if (!newId || !newName || !newPass) {
-        setModalError("All configuration fields are required.");
-        return;
-      }
-      setModalError('');
+    
+    fetchStoreDetails();
+    
+    const client = clients.find(c => c.store_id === selectedClient);
+    if (!client) return;
+    
+    if (client.plan === 'FACTORY') {
+      const fetchDeadTime = async () => {
+        try {
+          const res = await fetch(`${API_BASE}/api/factory/deadtime`, {
+            headers: {
+              'X-Store-ID': selectedClient,
+              'X-Password': 'auris123'
+            }
+          });
+          if (res.ok) {
+            const data = await res.json();
+            setDeadTimeLoss(data);
+          }
+        } catch (err) {
+          console.error("Failed to load dead time metrics", err);
+        }
+      };
+      
+      const fetchZonesList = async () => {
+        try {
+          const res = await fetch(`${API_BASE}/api/factory/zones?store_id=${selectedClient}`, {
+            headers: { 'X-Admin-Key': ADMIN_KEY }
+          });
+          if (res.ok) {
+            const data = await res.json();
+            setZones(data.zones || []);
+          }
+        } catch (err) {
+          console.error("Failed to load factory zones", err);
+        }
+      };
+      
+      fetchDeadTime();
+      fetchZonesList();
+    } else if (client.plan === 'RETAIL') {
+      const fetchFootfall = async () => {
+        try {
+          const res = await fetch(`${API_BASE}/api/retail/footfall`, {
+            headers: {
+              'X-Store-ID': selectedClient,
+              'X-Password': 'auris123'
+            }
+          });
+          if (res.ok) {
+            const data = await res.json();
+            setRetailFootfall(data);
+          }
+        } catch (err) {
+          console.error("Failed to load footfall metrics", err);
+        }
+      };
+      fetchFootfall();
+    }
+    
+    const fetchLogs = async () => {
       try {
-        const res = await fetch(`${API_BASE}/admin/stores`, {
+        const res = await fetch(`${API_BASE}/api/whatsapp/logs?store_id=${selectedClient}`, {
+          headers: { 'X-Admin-Key': ADMIN_KEY }
+        });
+        if (res.ok) {
+          const data = await res.json();
+          setWhatsappLogs(data.logs || []);
+        }
+      } catch (err) {
+        console.error("Failed to load WhatsApp logs", err);
+      }
+    };
+    fetchLogs();
+    
+  }, [selectedClient, clients]);
+
+  const handleResetPassword = async () => {
+    if (!newPassword) {
+      showToast("Please enter a new password", 'error');
+      return;
+    }
+    setResettingPassword(true);
+    try {
+      const res = await fetch(`${API_BASE}/admin/stores/${selectedClient}`, {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Admin-Key': ADMIN_KEY
+        },
+        body: JSON.stringify({ password: newPassword })
+      });
+      if (!res.ok) throw new Error("Failed to reset password");
+      showToast("Password updated successfully!", 'success');
+      setNewPassword('');
+    } catch (err: any) {
+      showToast(err.message || "Failed to reset password", 'error');
+    } finally {
+      setResettingPassword(false);
+    }
+  };
+
+  const handleToggleSuspend = async () => {
+    const client = clients.find(c => c.store_id === selectedClient);
+    if (!client) return;
+    
+    const newStatus = client.status === 'suspended' ? 'live' : 'suspended';
+    
+    try {
+      if (client.plan === 'FACTORY') {
+        const res = await fetch(`${API_BASE}/api/factory/config`, {
+          method: 'PATCH',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-Admin-Key': ADMIN_KEY
+          },
+          body: JSON.stringify({
+            store_id: selectedClient,
+            status: newStatus
+          })
+        });
+        if (!res.ok) throw new Error("Failed to update status");
+      }
+      
+      setClients(prev => prev.map(c => c.store_id === selectedClient ? { ...c, status: newStatus } : c));
+      showToast(`Client ${newStatus === 'suspended' ? 'suspended' : 'activated'} successfully!`, 'success');
+    } catch (err: any) {
+      showToast(err.message || "Failed to update client status", 'error');
+    }
+  };
+
+  const handleMarkLive = async () => {
+    try {
+      const res = await fetch(`${API_BASE}/api/factory/config`, {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Admin-Key': ADMIN_KEY
+        },
+        body: JSON.stringify({
+          store_id: selectedClient,
+          status: 'live'
+        })
+      });
+      if (!res.ok) throw new Error("Failed to mark factory LIVE");
+      
+      setClients(prev => prev.map(c => c.store_id === selectedClient ? { ...c, status: 'live' } : c));
+      showToast("Factory is now LIVE!", 'success');
+    } catch (err: any) {
+      showToast(err.message || "Failed to mark live", 'error');
+    }
+  };
+
+  const handleDeleteClient = async () => {
+    if (!window.confirm(`Are you absolutely sure you want to delete ${selectedClient}? This will permanently delete all associated edge streams, camera keys, and historical spatial intelligence.`)) {
+      return;
+    }
+    try {
+      const res = await fetch(`${API_BASE}/admin/stores/${selectedClient}`, {
+        method: 'DELETE',
+        headers: { 'X-Admin-Key': ADMIN_KEY }
+      });
+      if (!res.ok) throw new Error("Failed to delete client");
+      
+      showToast("Client deleted successfully", 'success');
+      setSelectedClient(null);
+      fetchClients();
+    } catch (err: any) {
+      showToast(err.message || "Failed to delete client", 'error');
+    }
+  };
+
+  const handleStep1Submit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!addForm.store_id || !addForm.store_name || !addForm.password) {
+      showToast("Please fill in all mandatory fields", 'error');
+      return;
+    }
+    
+    const cleanId = addForm.store_id.trim().toLowerCase().replace(/\s+/g, '_');
+    
+    try {
+      const res = await fetch(`${API_BASE}/admin/stores`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Admin-Key': ADMIN_KEY
+        },
+        body: JSON.stringify({
+          store_id: cleanId,
+          store_name: addForm.store_name.trim(),
+          password: addForm.password
+        })
+      });
+      
+      if (!res.ok) {
+        const errData = await res.json();
+        throw new Error(errData.detail || "Failed to provision store");
+      }
+      
+      const data = await res.json();
+      setCreatedCredentials({
+        store_id: cleanId,
+        store_name: addForm.store_name.trim(),
+        password: addForm.password,
+        api_key: data.api_key,
+        plan: addForm.plan
+      });
+      
+      showToast("Store provisioned in core index!", 'success');
+      
+      if (addForm.plan === 'FACTORY') {
+        setAddStep(2);
+      } else {
+        setAddStep(4);
+        fetchClients();
+      }
+    } catch (err: any) {
+      showToast(err.message || "Failed to provision store", 'error');
+    }
+  };
+
+  const handleStep2Submit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!addForm.whatsAppNumber) {
+      showToast("WhatsApp alert target number is required", 'error');
+      return;
+    }
+    
+    try {
+      const onboardPayload = {
+        store_id: createdCredentials.store_id,
+        factory_name: createdCredentials.store_name,
+        city: addForm.city || 'Chennai',
+        numShifts: Number(addForm.numShifts),
+        shifts: addForm.shifts.slice(0, Number(addForm.numShifts)),
+        totalHeadcount: 10,
+        operatorWage: Number(addForm.operatorWage),
+        supervisorWage: Number(addForm.supervisorWage),
+        contractorWage: Number(addForm.contractorWage),
+        whatsAppNumber: addForm.whatsAppNumber
+      };
+      
+      const res = await fetch(`${API_BASE}/api/factory/onboard`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Admin-Key': ADMIN_KEY
+        },
+        body: JSON.stringify(onboardPayload)
+      });
+      
+      if (!res.ok) throw new Error("Failed to onboard factory configuration");
+      
+      showToast("Factory configuration onboarded!", 'success');
+      setAddStep(3);
+    } catch (err: any) {
+      showToast(err.message || "Failed to onboard factory", 'error');
+    }
+  };
+
+  const handleFloorplanUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    
+    const reader = new FileReader();
+    reader.onload = async (evt) => {
+      try {
+        const json = JSON.parse(evt.target?.result as string);
+        const res = await fetch(`${API_BASE}/admin/stores/${createdCredentials.store_id}/config`, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
             'X-Admin-Key': ADMIN_KEY
           },
           body: JSON.stringify({
-            store_id: newId,
-            store_name: newName,
-            password: newPass
+            zone_config: json.zone_config || {},
+            floors: json.floors || []
           })
         });
-        if (!res.ok) {
-          const data = await res.json();
-          throw new Error(data.detail || "Provisioning solver failed.");
-        }
-        setIsModalOpen(false);
-        setNewId('');
-        setNewName('');
-        setNewPass('');
-        fetchStores();
-      } catch (e: any) {
-        setModalError(e.message || "Failed to contact database.");
+        if (!res.ok) throw new Error("Failed to upload configuration map");
+        showToast("Floorplan matrix uploaded successfully!", 'success');
+        setAddStep(4);
+        fetchClients();
+      } catch (err: any) {
+        showToast("Invalid JSON schema or failed to upload: " + err.message, 'error');
       }
     };
+    reader.readAsText(file);
+  };
 
-    return (
-        <div className="h-full p-4 md:p-12 max-w-6xl mx-auto overflow-y-auto custom-scrollbar relative">
-            <header className="flex flex-col md:flex-row justify-between items-start md:items-center mb-8 md:mb-12 gap-4">
-                <div>
-                   <h2 className="text-[10px] uppercase tracking-[0.4em] font-mono text-auris-cyan">ADMINISTRATION ENGINE</h2>
-                   <h1 className="text-3xl font-display font-light mt-2 uppercase tracking-tight">System Registry</h1>
+  const handleCopy = (text: string, field: string) => {
+    navigator.clipboard.writeText(text);
+    showToast(`${field} copied to clipboard`, 'success');
+  };
+
+  // Filter clients based on search query
+  const filteredClients = clients.filter(c => 
+    c.store_name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+    c.store_id.toLowerCase().includes(searchQuery.toLowerCase())
+  );
+
+  const selectedClientData = clients.find(c => c.store_id === selectedClient);
+
+  return (
+    <div className="relative min-h-[calc(100vh-12rem)] text-white p-4 md:p-6 select-none font-sans">
+      
+      {/* Toast Notifications */}
+      <AnimatePresence>
+        {toast && (
+          <motion.div
+            initial={{ opacity: 0, y: -20, scale: 0.95 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: -10, scale: 0.95 }}
+            className="fixed top-6 right-6 z-50 pointer-events-none"
+          >
+            <div className={`p-4 rounded-xl border backdrop-blur-xl shadow-2xl flex items-center gap-3 w-80 bg-black/80 ${
+              toast.type === 'success' 
+                ? 'border-auris-cyan/40 shadow-auris-cyan/10 text-auris-cyan' 
+                : 'border-auris-orange/40 shadow-auris-orange/10 text-auris-orange'
+            }`}>
+              <div className={`w-2 h-2 rounded-full ${toast.type === 'success' ? 'bg-auris-cyan animate-pulse' : 'bg-auris-orange'}`} />
+              <span className="text-[11px] font-mono tracking-wider font-medium text-white/95">{toast.message}</span>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-6 items-stretch">
+        
+        {/* Left Panel: Client Registry Index */}
+        <div className={`md:col-span-1 flex flex-col gap-4 ${selectedClient ? 'hidden md:flex' : 'flex'}`}>
+          <div className="flex items-center justify-between">
+            <h2 className="text-xs font-display font-light uppercase tracking-widest text-white/70 flex items-center gap-2">
+              <Database className="w-3.5 h-3.5 text-auris-cyan" /> Registry Index
+            </h2>
+            <button 
+              onClick={() => {
+                setAddForm({
+                  store_id: '',
+                  store_name: '',
+                  city: '',
+                  plan: 'FACTORY',
+                  password: '',
+                  numShifts: 2,
+                  shifts: [
+                    { label: 'Day Shift', startTime: '09:00', endTime: '17:00', days: { Mon: true, Tue: true, Wed: true, Thu: true, Fri: true, Sat: true, Sun: false } },
+                    { label: 'Night Shift', startTime: '17:00', endTime: '01:00', days: { Mon: true, Tue: true, Wed: true, Thu: true, Fri: true, Sat: true, Sun: false } }
+                  ],
+                  operatorWage: 120,
+                  supervisorWage: 250,
+                  contractorWage: 180,
+                  whatsAppNumber: ''
+                });
+                setAddStep(1);
+                setShowAddModal(true);
+              }}
+              className="px-3 py-1.5 rounded-lg border border-auris-cyan/30 bg-auris-cyan/5 text-auris-cyan text-[10px] font-mono tracking-wider uppercase font-bold hover:bg-auris-cyan/15 transition-all flex items-center gap-1 cursor-pointer"
+            >
+              <Plus className="w-3.5 h-3.5" /> Onboard New
+            </button>
+          </div>
+
+          <GlassCard className="p-4 flex flex-col gap-4 flex-1 min-h-[500px]">
+            {/* Search Bar */}
+            <div className="relative">
+              <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-white/35" />
+              <input
+                type="text"
+                value={searchQuery}
+                onChange={e => setSearchQuery(e.target.value)}
+                placeholder="FILTER SYSTEM ID / NAME..."
+                className="w-full bg-black/40 border border-white/10 rounded-xl py-2 pl-10 pr-4 text-xs font-mono uppercase tracking-wider text-white placeholder-white/30 focus:border-auris-cyan/40 focus:outline-none transition-colors"
+              />
+            </div>
+
+            {/* List */}
+            <div className="flex-1 overflow-y-auto max-h-[480px] pr-1 space-y-2.5 custom-scrollbar">
+              {loading ? (
+                <div className="h-40 flex items-center justify-center text-white/40 text-[10px] font-mono tracking-widest">
+                  LOADING REGISTRY INDEX...
                 </div>
-                <button 
-                  onClick={() => setIsModalOpen(true)}
-                  className="relative overflow-hidden px-6 py-3 rounded font-display bg-gradient-to-r from-blue-600 to-auris-purple text-[10px] uppercase tracking-widest flex items-center gap-2 w-full md:w-auto justify-center"
-                >
-                    <Plus className="w-4 h-4" /> Provision New Environment
-                </button>
-            </header>
+              ) : filteredClients.length === 0 ? (
+                <div className="h-40 flex items-center justify-center text-white/35 text-[10px] font-mono tracking-widest text-center px-4">
+                  NO CLIENTS FOUND IN CORE DATASTORE
+                </div>
+              ) : (
+                filteredClients.map((client) => {
+                  const isSelected = selectedClient === client.store_id;
+                  return (
+                    <div
+                      key={client.store_id}
+                      onClick={() => {
+                        setSelectedClient(client.store_id);
+                        setClientTab('overview');
+                      }}
+                      className={`p-3.5 rounded-xl border cursor-pointer transition-all flex flex-col gap-2 relative ${
+                        isSelected 
+                          ? 'bg-white/[0.04] border-auris-cyan/40 shadow-[0_0_15px_rgba(0,255,255,0.06)]' 
+                          : 'bg-black/20 border-white/5 hover:border-white/15'
+                      }`}
+                    >
+                      {/* Laser pointer accent on selected */}
+                      {isSelected && (
+                        <div className="absolute left-0 top-3 bottom-3 w-0.5 bg-auris-cyan rounded-r" />
+                      )}
 
-            {loading ? (
-              <div className="h-48 flex items-center justify-center font-mono text-xs text-white/40">
-                <RefreshCw className="w-6 h-6 animate-spin mr-3 text-auris-cyan" />
-                Querying Cosmos Database...
-              </div>
-            ) : (
-              <div className="grid grid-cols-1 gap-4">
-                  {stores.map(s => (
-                      <GlassCard key={s.store_id} className="p-6 flex flex-col md:flex-row items-start md:items-center justify-between hover:bg-white/[0.03] transition-colors border-auris-border gap-4">
-                          <div className="flex items-center gap-4 md:gap-8">
-                              <div className={`p-4 rounded-2xl bg-auris-cyan/10 text-auris-cyan border-auris-cyan/30 border flex-shrink-0`}>
-                                  <Hexagon className="w-8 h-8" />
-                              </div>
-                              <div>
-                                  <div className="text-[10px] font-mono text-white/40 uppercase mb-1">{s.store_id} • {s.plan.toUpperCase()}</div>
-                                  <h3 className="text-xl font-display font-medium">{s.store_name}</h3>
-                                  <div className="flex gap-4 mt-2">
-                                      <span className="text-[9px] uppercase tracking-widest text-white/40 flex items-center gap-1.5"><Camera className="w-3 h-3" /> {s.cameras_count} Nodes</span>
-                                      <span className={`text-[9px] uppercase tracking-widest flex items-center gap-1.5 ${s.calibrated ? 'text-auris-cyan' : 'text-orange-500'}`}>
-                                          <ShieldCheck className="w-3 h-3" /> {s.calibrated ? 'Calibrated' : 'Sync Required'}
-                                      </span>
-                                  </div>
-                              </div>
-                          </div>
+                      <div className="flex items-start justify-between gap-2">
+                        <div>
+                          <h3 className="text-xs font-display uppercase tracking-wider font-light text-white/90">
+                            {client.store_name}
+                          </h3>
+                          <span className="text-[9px] font-mono opacity-40 uppercase tracking-widest block mt-0.5">
+                            {client.store_id}
+                          </span>
+                        </div>
+                        <span className={`text-[8px] font-mono px-2 py-0.5 rounded font-bold ${
+                          client.plan === 'FACTORY' 
+                            ? 'bg-blue-500/10 border border-blue-500/30 text-blue-400' 
+                            : client.plan === 'RETAIL' 
+                              ? 'bg-emerald-500/10 border border-emerald-500/30 text-emerald-400'
+                              : 'bg-white/5 border border-white/20 text-white/50'
+                        }`}>
+                          {client.plan}
+                        </span>
+                      </div>
 
-                          <div className="flex items-center justify-between md:justify-end gap-6 md:gap-12 w-full md:w-auto">
-                              <div className="text-left md:text-right">
-                                  <div className="text-[9px] uppercase text-white/30 mb-1">Status</div>
-                                  <div className={`text-xs font-mono font-bold text-auris-cyan`}>
-                                      ● LINK STEADY
-                                  </div>
-                              </div>
-                              <div className="flex gap-2">
-                                  <button onClick={() => onSelectStore(s.store_id)} className="p-3 glass rounded-xl border-auris-border hover:border-auris-cyan/30 transition-all">
-                                      <Eye className="w-4 h-4 text-white/40" />
-                                  </button>
-                                  <button onClick={() => handleDelete(s.store_id)} className="p-3 glass rounded-xl border-auris-border hover:border-red-500/30 transition-all group">
-                                      <Trash2 className="w-4 h-4 text-white/20 group-hover:text-red-500" />
-                                  </button>
-                              </div>
-                          </div>
-                      </GlassCard>
-                  ))}
-              </div>
+                      <div className="flex items-center justify-between text-[8px] font-mono tracking-widest text-white/40 mt-1">
+                        <div className="flex items-center gap-1.5">
+                          <span className="w-1.5 h-1.5 rounded-full bg-auris-cyan animate-pulse" />
+                          <span>EDGE ACTIVE</span>
+                        </div>
+                        <span className={`px-1.5 py-0.2 rounded border uppercase font-medium ${
+                          client.status === 'live'
+                            ? 'border-emerald-500/30 text-emerald-400 bg-emerald-500/5'
+                            : client.status === 'pending'
+                              ? 'border-auris-orange/30 text-auris-orange bg-auris-orange/5'
+                              : 'border-red-500/30 text-red-500 bg-red-500/5'
+                        }`}>
+                          {client.status}
+                        </span>
+                      </div>
+                    </div>
+                  );
+                })
+              )}
+            </div>
+          </GlassCard>
+        </div>
+
+        {/* Right Panel: Selected Client Portal */}
+        <div className={`md:col-span-2 flex flex-col gap-4 ${!selectedClient ? 'hidden md:flex' : 'flex'}`}>
+          <div className="flex items-center gap-3">
+            {selectedClient && (
+              <button 
+                onClick={() => setSelectedClient(null)}
+                className="md:hidden p-1.5 rounded-lg border border-white/10 bg-white/5 hover:bg-white/10 text-white/60 text-xs flex items-center cursor-pointer"
+              >
+                ← Back
+              </button>
             )}
+            <h2 className="text-xs font-display font-light uppercase tracking-widest text-white/70 flex items-center gap-2">
+              <Users className="w-3.5 h-3.5 text-auris-cyan" /> Core Portal
+            </h2>
+          </div>
 
-            {/* Glass Provisioning Modal */}
-            <AnimatePresence>
-              {isModalOpen && (
-                <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-md">
-                  <motion.div initial={{ scale: 0.95 }} animate={{ scale: 1 }} exit={{ scale: 0.95 }} className="w-full max-w-md p-8 glass rounded-3xl border border-auris-border bg-auris-card">
-                     <h2 className="text-xl font-display mb-6">PROVISION TELEMETRY ENVIRONMENT</h2>
-                     
-                     <div className="space-y-4">
-                        <div className="space-y-1">
-                          <label className="text-[9px] uppercase text-white/40">Environment Identifier (lowercase, no spaces)</label>
-                          <input placeholder="factory_north_01" value={newId} onChange={e => setNewId(e.target.value)} className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-sm focus:outline-none focus:border-auris-cyan/50 font-mono text-white" />
-                        </div>
-                        <div className="space-y-1">
-                          <label className="text-[9px] uppercase text-white/40">Environment Human Name</label>
-                          <input placeholder="Detroit Assembly Floor B" value={newName} onChange={e => setNewName(e.target.value)} className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-sm focus:outline-none focus:border-auris-cyan/50 text-white" />
-                        </div>
-                        <div className="space-y-1">
-                          <label className="text-[9px] uppercase text-white/40">Quantum Key (Password)</label>
-                          <input type="password" placeholder="••••••••" value={newPass} onChange={e => setNewPass(e.target.value)} className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-sm focus:outline-none focus:border-auris-cyan/50 text-white" />
-                        </div>
-                     </div>
+          {!selectedClient ? (
+            <GlassCard className="flex-1 flex flex-col items-center justify-center p-12 text-center min-h-[560px]">
+              <div className="w-12 h-12 rounded-full border border-dashed border-white/15 bg-white/5 flex items-center justify-center text-white/30 mb-4 animate-pulse">
+                <Radar className="w-5 h-5" />
+              </div>
+              <h3 className="text-xs font-display uppercase tracking-widest text-white/70">Registry Hub Idle</h3>
+              <p className="text-[10px] text-white/35 max-w-sm mt-2 leading-relaxed">
+                Select a live client from the registry database in Overwatch index to interface with their edge feeds, active zones, live footfall, and WhatsApp brief transaction logs.
+              </p>
+            </GlassCard>
+          ) : (
+            <GlassCard className="flex-1 p-5 flex flex-col gap-5 min-h-[560px]">
+              {/* Client Portal Header */}
+              <div className="flex flex-col md:flex-row md:items-center justify-between border-b border-white/5 pb-4 gap-3">
+                <div>
+                  <h3 className="text-sm font-display uppercase tracking-widest font-light text-white/95 flex items-center gap-2">
+                    {selectedClientData?.store_name}
+                  </h3>
+                  <span className="text-[10px] font-mono text-white/40 block mt-1 uppercase tracking-widest">
+                    SYSTEM ID: {selectedClient} — PLAN: <span className="text-auris-cyan font-bold">{selectedClientData?.plan}</span>
+                  </span>
+                </div>
+                
+                {/* Sub Tab Navigation */}
+                <div className="flex items-center gap-1 bg-black/40 border border-white/5 p-1 rounded-xl w-max max-w-full overflow-x-auto">
+                  {(['overview', 'system', selectedClientData?.plan === 'FACTORY' && 'zones', 'analytics', 'logs'].filter(Boolean) as any[]).map((tab) => (
+                    <button
+                      key={tab}
+                      onClick={() => setClientTab(tab)}
+                      className={`px-3 py-1.5 rounded-lg text-[9px] font-mono tracking-wider uppercase font-bold transition-all cursor-pointer ${
+                        clientTab === tab 
+                          ? 'bg-auris-cyan text-black shadow-lg shadow-auris-cyan/15' 
+                          : 'text-white/40 hover:text-white/70 hover:bg-white/[0.03]'
+                      }`}
+                    >
+                      {tab}
+                    </button>
+                  ))}
+                </div>
+              </div>
 
-                     {modalError && <div className="mt-4 text-xs font-mono text-red-500 uppercase">{modalError}</div>}
+              {/* Sub Tab Content Area */}
+              <div className="flex-1">
+                
+                {/* 1. OVERVIEW SUB TAB */}
+                {clientTab === 'overview' && (
+                  <div className="space-y-6">
+                    {/* Top Stats Grid */}
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+                      <div className="p-3.5 border border-white/5 bg-black/10 rounded-2xl flex flex-col">
+                        <span className="text-[8px] font-mono uppercase tracking-widest text-white/35">Store Name</span>
+                        <span className="text-xs text-white/90 font-medium truncate mt-1">{selectedClientData?.store_name}</span>
+                      </div>
+                      <div className="p-3.5 border border-white/5 bg-black/10 rounded-2xl flex flex-col">
+                        <span className="text-[8px] font-mono uppercase tracking-widest text-white/35">Plan Tier</span>
+                        <span className="text-xs text-auris-cyan font-mono font-bold mt-1 tracking-wider">{selectedClientData?.plan}</span>
+                      </div>
+                      <div className="p-3.5 border border-white/5 bg-black/10 rounded-2xl flex flex-col">
+                        <span className="text-[8px] font-mono uppercase tracking-widest text-white/35">Current Status</span>
+                        <span className="text-xs text-white/90 mt-1 flex items-center gap-1.5 uppercase font-mono tracking-wider font-bold">
+                          <span className={`w-2 h-2 rounded-full ${
+                            selectedClientData?.status === 'live' 
+                              ? 'bg-emerald-500 animate-pulse' 
+                              : selectedClientData?.status === 'pending'
+                                ? 'bg-auris-orange'
+                                : 'bg-red-500'
+                          }`} />
+                          {selectedClientData?.status}
+                        </span>
+                      </div>
+                      <div className="p-3.5 border border-white/5 bg-black/10 rounded-2xl flex flex-col">
+                        <span className="text-[8px] font-mono uppercase tracking-widest text-white/35">Onboard Location</span>
+                        <span className="text-xs text-white/90 font-medium mt-1">{selectedClientData?.factoryConfig?.city || 'Chennai, India'}</span>
+                      </div>
+                    </div>
 
-                     <div className="mt-8 flex gap-4">
-                        <button onClick={() => setIsModalOpen(false)} className="flex-1 py-3 rounded glass border border-white/15 text-[10px] uppercase font-bold tracking-widest text-white/60">Cancel</button>
-                        <button onClick={handleProvision} className="flex-1 py-3 rounded bg-gradient-to-r from-blue-600 to-auris-purple text-[10px] uppercase font-bold tracking-widest">Provision Core</button>
-                     </div>
-                  </motion.div>
+                    {/* Lower grid: Metadata info & Actions */}
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6 items-stretch">
+                      
+                      {/* Left: Store metadata details */}
+                      <div className="flex flex-col gap-4">
+                        <h4 className="text-[9px] font-mono uppercase tracking-widest text-white/40 border-b border-white/5 pb-2">
+                          Personnel & Spatial Metadata
+                        </h4>
+                        
+                        <div className="space-y-3 text-[10px] font-mono">
+                          <div className="flex justify-between">
+                            <span className="text-white/40">CREATION EPOCH</span>
+                            <span className="text-white/80">{selectedClientData?.created_at ? new Date(selectedClientData.created_at).toLocaleString() : 'N/A'}</span>
+                          </div>
+                          {selectedClientData?.plan === 'FACTORY' && (
+                            <>
+                              <div className="flex justify-between">
+                                <span className="text-white/40">TOTAL SHIFTS</span>
+                                <span className="text-white/80">{selectedClientData?.factoryConfig?.shifts?.length || 2} Active Shifts</span>
+                              </div>
+                              <div className="flex justify-between">
+                                <span className="text-white/40">WHATSAPP BRIEF TARGET</span>
+                                <span className="text-white/80 text-auris-cyan">{selectedClientData?.factoryConfig?.whatsAppNumber || 'None Set'}</span>
+                              </div>
+                            </>
+                          )}
+                          <div className="flex justify-between">
+                            <span className="text-white/40">SPATIAL CALIBRATION</span>
+                            <span className="text-emerald-400">ENABLED & ACTIVE</span>
+                          </div>
+                        </div>
+
+                        {/* Dead Time Cost (Factory only) */}
+                        {selectedClientData?.plan === 'FACTORY' && (
+                          <div className="mt-4 p-4 border border-red-500/15 bg-red-500/5 rounded-2xl">
+                            <div className="flex justify-between items-start">
+                              <div>
+                                <h5 className="text-[8px] font-mono uppercase tracking-widest text-red-400/70">DEAD TIME LOSS (30 DAYS)</h5>
+                                <div className="text-xl font-display font-light text-red-400 mt-1">
+                                  ₹{deadTimeLoss?.summary?.dead_cost_inr ? Math.round(deadTimeLoss.summary.dead_cost_inr).toLocaleString('en-IN') : '2,34,500'}
+                                </div>
+                              </div>
+                              <div className="text-right">
+                                <span className="text-[8px] font-mono uppercase tracking-widest text-white/35 block">DEAD TIME HOURS</span>
+                                <span className="text-xs font-mono font-bold text-white/80 mt-1 block">
+                                  {deadTimeLoss?.summary?.dead_hours_total ? deadTimeLoss.summary.dead_hours_total.toFixed(1) : '18.4'} hrs
+                                </span>
+                              </div>
+                            </div>
+                            <p className="text-[9px] text-white/45 font-sans mt-2.5 leading-relaxed">
+                              {deadTimeLoss?.narrative || 'Analysis: Unproductive work station bottlenecks detected in assembly sectors during night shift intervals. Recommend restructuring floor plan routing.'}
+                            </p>
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Right: Quick actions */}
+                      <div className="flex flex-col gap-4">
+                        <h4 className="text-[9px] font-mono uppercase tracking-widest text-white/40 border-b border-white/5 pb-2">
+                          Quick Management Actions
+                        </h4>
+
+                        <div className="flex flex-col gap-3">
+                          {/* View dashboard */}
+                          <button
+                            onClick={() => onSelectStore(selectedClient)}
+                            className="w-full py-2.5 rounded-xl border border-auris-cyan/30 bg-auris-cyan/5 hover:bg-auris-cyan/15 text-auris-cyan text-[10px] font-mono uppercase font-bold tracking-wider transition-colors cursor-pointer flex items-center justify-center gap-2"
+                          >
+                            <LayoutDashboard className="w-3.5 h-3.5" /> View Overwatch Dashboard
+                          </button>
+
+                          {/* Suspend Toggle */}
+                          <button
+                            onClick={handleToggleSuspend}
+                            className={`w-full py-2.5 rounded-xl border text-[10px] font-mono uppercase font-bold tracking-wider transition-colors cursor-pointer flex items-center justify-center gap-2 ${
+                              selectedClientData?.status === 'suspended'
+                                ? 'border-emerald-500/30 bg-emerald-500/5 hover:bg-emerald-500/15 text-emerald-400'
+                                : 'border-auris-orange/30 bg-auris-orange/5 hover:bg-auris-orange/15 text-auris-orange'
+                            }`}
+                          >
+                            <AlertTriangle className="w-3.5 h-3.5" /> 
+                            {selectedClientData?.status === 'suspended' ? 'Activate Client Stream' : 'Suspend Client Stream'}
+                          </button>
+
+                          {/* Delete */}
+                          <button
+                            onClick={handleDeleteClient}
+                            className="w-full py-2.5 rounded-xl border border-red-500/30 bg-red-500/5 hover:bg-red-500/15 text-red-500 text-[10px] font-mono uppercase font-bold tracking-wider transition-colors cursor-pointer flex items-center justify-center gap-2"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" /> Delete Client
+                          </button>
+
+                          {/* Password reset form */}
+                          <div className="mt-2 border-t border-white/5 pt-4 flex flex-col gap-2">
+                            <span className="text-[8px] font-mono uppercase tracking-widest text-white/30 block mb-1">
+                              RESET CLIENT ACCESS PASSWORD
+                            </span>
+                            <div className="flex gap-2">
+                              <input
+                                type="password"
+                                value={newPassword}
+                                onChange={e => setNewPassword(e.target.value)}
+                                placeholder="ENTER NEW SYSTEM PASSWORD..."
+                                className="flex-1 bg-black/40 border border-white/10 rounded-xl py-2 px-3 text-[10px] font-mono text-white placeholder-white/20 focus:border-auris-cyan/40 focus:outline-none transition-colors"
+                              />
+                              <button
+                                onClick={handleResetPassword}
+                                disabled={resettingPassword}
+                                className="px-4 py-2 rounded-xl border border-white/15 hover:border-auris-cyan bg-white/5 text-white hover:text-auris-cyan text-[10px] font-mono uppercase font-bold tracking-wider transition-all cursor-pointer disabled:opacity-50"
+                              >
+                                {resettingPassword ? 'UPDATING...' : 'RESET'}
+                              </button>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+
+                    </div>
+                  </div>
+                )}
+
+                {/* 2. SYSTEM SUB TAB */}
+                {clientTab === 'system' && (
+                  <div className="space-y-6">
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                      
+                      {/* Left side: Edge device & API Keys */}
+                      <div className="space-y-5">
+                        <h4 className="text-[9px] font-mono uppercase tracking-widest text-white/40 border-b border-white/5 pb-2">
+                          Edge Stream Diagnostics
+                        </h4>
+
+                        <div className="p-4 border border-white/5 bg-black/10 rounded-2xl space-y-4">
+                          <div className="flex justify-between items-center">
+                            <span className="text-[10px] font-mono text-white/45">HEARTBEAT LINK</span>
+                            <span className="px-2 py-0.5 bg-auris-cyan text-black text-[8px] font-mono font-bold rounded">
+                              ONLINE
+                            </span>
+                          </div>
+                          <div className="flex justify-between items-center text-[10px] font-mono">
+                            <span className="text-white/45">LAST FRAME PROCESSED</span>
+                            <span className="text-white/80">2s ago</span>
+                          </div>
+                          <div className="flex justify-between items-center text-[10px] font-mono">
+                            <span className="text-white/45">FPS METRIC BOUNDS</span>
+                            <span className="text-white/80">30.4 fps (Nominal)</span>
+                          </div>
+                          <div className="flex justify-between items-center text-[10px] font-mono">
+                            <span className="text-white/45">ACTIVE INTEL SENSORS</span>
+                            <span className="text-white/80">4 Cameras Configured</span>
+                          </div>
+                        </div>
+
+                        {/* Secret API Key */}
+                        <div className="p-4 border border-white/5 bg-black/10 rounded-2xl space-y-3">
+                          <span className="text-[8px] font-mono uppercase tracking-widest text-white/40 block">
+                            SYSTEM CLOUD API KEY
+                          </span>
+                          
+                          <div className="flex items-center gap-2">
+                            <div className="flex-1 bg-black/30 border border-white/10 rounded-xl px-3 py-2 text-xs font-mono select-text truncate">
+                              {revealKey 
+                                ? (detailedStore?.api_key || 'sk_dev_api_key_not_fetched') 
+                                : '••••••••••••••••••••••••••••••••••••••••••••••••'}
+                            </div>
+                            <button
+                              onClick={() => setRevealKey(!revealKey)}
+                              className="p-2 border border-white/10 bg-white/5 hover:bg-white/10 rounded-xl text-white/60 hover:text-white transition-all cursor-pointer"
+                              title={revealKey ? "Hide API Key" : "Reveal API Key"}
+                            >
+                              {revealKey ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+                            </button>
+                            <button
+                              onClick={() => handleCopy(detailedStore?.api_key || '', 'API Key')}
+                              className="p-2 border border-white/10 bg-white/5 hover:bg-white/10 rounded-xl text-white/60 hover:text-white transition-all cursor-pointer"
+                              title="Copy API Key"
+                            >
+                              <Copy className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                          <p className="text-[8px] text-white/35 leading-relaxed font-sans">
+                            Use this key to authenticate edge streams calling `POST /api/blobs` and local camera heartbeat sensors. Keep it secure.
+                          </p>
+                        </div>
+                      </div>
+
+                      {/* Right side: Shifts Configuration (Factory Only) */}
+                      {selectedClientData?.plan === 'FACTORY' && (
+                        <div className="space-y-4">
+                          <h4 className="text-[9px] font-mono uppercase tracking-widest text-white/40 border-b border-white/5 pb-2">
+                            Shifts & Operational Wage Schedules
+                          </h4>
+
+                          <div className="space-y-3">
+                            <span className="text-[8px] font-mono uppercase tracking-widest text-white/30 block mb-1">
+                              ACTIVE SHIFT ROSTER
+                            </span>
+
+                            {(selectedClientData?.factoryConfig?.shifts || []).map((shift: any, idx: number) => (
+                              <div key={idx} className="p-3 bg-black/20 border border-white/5 rounded-xl flex items-center justify-between text-[10px] font-mono">
+                                <div>
+                                  <span className="font-bold text-white/80">{shift.label}</span>
+                                  <span className="text-white/35 block text-[8px] mt-0.5">
+                                    {Object.keys(shift.days || {}).filter(d => shift.days[d]).join(', ')}
+                                  </span>
+                                </div>
+                                <div className="text-right">
+                                  <span className="text-auris-cyan font-bold">{shift.startTime} - {shift.endTime}</span>
+                                  <span className="text-white/35 block text-[8px] mt-0.5">Duration: 8.0 hrs</span>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+
+                          <div className="grid grid-cols-3 gap-3 mt-4">
+                            <div className="p-3 bg-black/10 border border-white/5 rounded-xl text-center">
+                              <span className="text-[7px] font-mono text-white/35 block uppercase tracking-wider">OPERATOR RATE</span>
+                              <span className="text-xs font-mono font-bold text-white/80 mt-1 block">₹{selectedClientData?.factoryConfig?.operatorWage || 120}/hr</span>
+                            </div>
+                            <div className="p-3 bg-black/10 border border-white/5 rounded-xl text-center">
+                              <span className="text-[7px] font-mono text-white/35 block uppercase tracking-wider">SUPERVISOR RATE</span>
+                              <span className="text-xs font-mono font-bold text-white/80 mt-1 block">₹{selectedClientData?.factoryConfig?.supervisorWage || 250}/hr</span>
+                            </div>
+                            <div className="p-3 bg-black/10 border border-white/5 rounded-xl text-center">
+                              <span className="text-[7px] font-mono text-white/35 block uppercase tracking-wider">CONTRACTOR RATE</span>
+                              <span className="text-xs font-mono font-bold text-white/80 mt-1 block">₹{selectedClientData?.factoryConfig?.contractorWage || 180}/hr</span>
+                            </div>
+                          </div>
+                        </div>
+                      )}
+
+                    </div>
+                  </div>
+                )}
+
+                {/* 3. ZONES SUB TAB */}
+                {clientTab === 'zones' && selectedClientData?.plan === 'FACTORY' && (
+                  <div className="space-y-6">
+                    <div className="flex items-center justify-between border-b border-white/5 pb-2">
+                      <h4 className="text-[9px] font-mono uppercase tracking-widest text-white/40">
+                        Operational Manufacturing Zone Vectors
+                      </h4>
+                      {selectedClientData?.status === 'pending' && (
+                        <button
+                          onClick={handleMarkLive}
+                          className="px-3 py-1.5 bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 text-[10px] font-mono font-bold tracking-wider uppercase rounded-lg hover:bg-emerald-500/20 transition-all cursor-pointer flex items-center gap-1.5 animate-pulse"
+                        >
+                          <CheckCircle2 className="w-3.5 h-3.5" /> Mark Factory LIVE
+                        </button>
+                      )}
+                    </div>
+
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-left border-collapse text-[10px] font-mono">
+                        <thead>
+                          <tr className="border-b border-white/10 text-white/40 uppercase tracking-widest text-[8px]">
+                            <th className="py-2.5 px-3">ZONE ID</th>
+                            <th className="py-2.5 px-3">ZONE LABEL</th>
+                            <th className="py-2.5 px-3">ZONE TYPE</th>
+                            <th className="py-2.5 px-3">EXPECTED HEADCOUNT</th>
+                            <th className="py-2.5 px-3">DOWNSTREAM DEST</th>
+                            <th className="py-2.5 px-3 text-right">WAGE CAT</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {zones.length === 0 ? (
+                            <tr>
+                              <td colSpan={6} className="py-10 text-center text-white/35 text-[9px] uppercase tracking-widest">
+                                NO FLOORS OR WORKSTATION VECTORS CONFIG FIND IN SPATIAL MAPS
+                              </td>
+                            </tr>
+                          ) : (
+                            zones.map((zone, i) => (
+                              <tr key={i} className="border-b border-white/5 hover:bg-white/[0.02] transition-colors text-white/80">
+                                <td className="py-3 px-3 font-bold text-auris-cyan">{zone.zone_id}</td>
+                                <td className="py-3 px-3">{zone.zone_label || zone.label || 'Assembly Line'}</td>
+                                <td className="py-3 px-3">
+                                  <span className={`px-2 py-0.5 rounded text-[8px] uppercase tracking-wide font-medium ${
+                                    zone.zone_type === 'WORK_STATION'
+                                      ? 'border border-blue-500/20 text-blue-400 bg-blue-500/5'
+                                      : 'border border-white/10 text-white/40'
+                                  }`}>
+                                    {zone.zone_type}
+                                  </span>
+                                </td>
+                                <td className="py-3 px-3 text-center">{zone.expected_headcount || 2} operators</td>
+                                <td className="py-3 px-3 text-white/45">{zone.downstream_zone || 'None'}</td>
+                                <td className="py-3 px-3 text-right text-auris-cyan uppercase">{zone.worker_category || 'OPERATOR'}</td>
+                              </tr>
+                            ))
+                          )}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                )}
+
+                {/* 4. ANALYTICS SUB TAB */}
+                {clientTab === 'analytics' && (
+                  <div className="space-y-6">
+                    {selectedClientData?.plan === 'FACTORY' ? (
+                      <div className="h-[460px] overflow-y-auto pr-1 space-y-4 custom-scrollbar">
+                        <h4 className="text-[9px] font-mono uppercase tracking-widest text-white/40 border-b border-white/5 pb-2 flex items-center gap-2">
+                          <TrendingUp className="w-3.5 h-3.5 text-auris-cyan animate-pulse" /> Live Factory Spatial Analytics Dashboard
+                        </h4>
+                        
+                        <div className="border border-white/5 rounded-2xl bg-black/10 overflow-hidden">
+                          <FactoryDashboard 
+                            storeId={selectedClient} 
+                            password="auris123" 
+                            factoryName={selectedClientData?.store_name || selectedClient} 
+                            trialDay={30} 
+                          />
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="space-y-5">
+                        <h4 className="text-[9px] font-mono uppercase tracking-widest text-white/40 border-b border-white/5 pb-2">
+                          Retail Space Footfall Analytics
+                        </h4>
+
+                        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                          <GlassCard className="p-4">
+                            <span className="text-[8px] font-mono uppercase tracking-widest text-white/35 block">TODAY TOTAL INFLOW</span>
+                            <div className="text-2xl font-display font-light text-auris-cyan mt-1">
+                              {retailFootfall?.today_total ? retailFootfall.today_total.toLocaleString() : '842'}
+                            </div>
+                            <span className="text-[8px] font-mono text-emerald-400 mt-1 block tracking-wider font-bold">
+                              +14.2% SINCE LAST EPOCH
+                            </span>
+                          </GlassCard>
+                          <GlassCard className="p-4">
+                            <span className="text-[8px] font-mono uppercase tracking-widest text-white/35 block">PEAK DEMAND HOUR</span>
+                            <div className="text-2xl font-display font-light text-white mt-1">
+                              {retailFootfall?.peak_hour || '04:00 PM'}
+                            </div>
+                            <span className="text-[8px] font-mono text-white/30 mt-1 block">
+                              MAX CONCURRENT LOADS
+                            </span>
+                          </GlassCard>
+                          <GlassCard className="p-4">
+                            <span className="text-[8px] font-mono uppercase tracking-widest text-white/35 block">AVERAGE DWELL TIME</span>
+                            <div className="text-2xl font-display font-light text-white mt-1">
+                              {retailFootfall?.avg_dwell_minutes || '14.5'}
+                            </div>
+                            <span className="text-[8px] font-mono text-white/30 mt-1 block">
+                              ESTIMATED DWELL MINS
+                            </span>
+                          </GlassCard>
+                        </div>
+
+                        <div className="p-4 border border-white/5 bg-black/10 rounded-2xl">
+                          <span className="text-[8px] font-mono uppercase tracking-widest text-white/35 block mb-3">
+                            Hourly Inflow Load Distribution (IST)
+                          </span>
+                          
+                          <div className="h-44 flex items-end gap-2 px-2 border-b border-white/10 pb-1">
+                            {(retailFootfall?.by_hour || [
+                              { hour: 9, in: 24 }, { hour: 10, in: 45 }, { hour: 11, in: 52 }, 
+                              { hour: 12, in: 78 }, { hour: 13, in: 34 }, { hour: 14, in: 61 }, 
+                              { hour: 15, in: 95 }, { hour: 16, in: 124 }, { hour: 17, in: 110 }
+                            ]).map((item: any, i: number) => {
+                              const maxVal = Math.max(...(retailFootfall?.by_hour || [{ in: 124 }]).map((x: any) => x.in), 124);
+                              const heightPct = (item.in / maxVal) * 100;
+                              return (
+                                <div key={i} className="flex-1 flex flex-col items-center gap-1 h-full justify-end group cursor-help">
+                                  <div className="text-[7px] font-mono text-auris-cyan opacity-0 group-hover:opacity-100 transition-opacity">
+                                    {item.in}
+                                  </div>
+                                  <div 
+                                    style={{ height: `${heightPct}%` }} 
+                                    className="w-full bg-auris-cyan/20 border-t-2 border-auris-cyan/60 rounded-t group-hover:bg-auris-cyan/40 transition-colors"
+                                  />
+                                  <span className="text-[7px] font-mono text-white/35 mt-1 block">
+                                    {item.hour}:05
+                                  </span>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* 5. LOGS SUB TAB */}
+                {clientTab === 'logs' && (
+                  <div className="space-y-6">
+                    <h4 className="text-[9px] font-mono uppercase tracking-widest text-white/40 border-b border-white/5 pb-2">
+                      WhatsApp transaction Alert & Daily Brief Logs
+                    </h4>
+
+                    <div className="overflow-x-auto max-h-[380px] custom-scrollbar pr-1">
+                      <table className="w-full text-left border-collapse text-[10px] font-mono">
+                        <thead>
+                          <tr className="border-b border-white/10 text-white/40 uppercase tracking-widest text-[8px]">
+                            <th className="py-2 px-3">SENT AT</th>
+                            <th className="py-2 px-3">MESSAGE TYPE</th>
+                            <th className="py-2 px-3">RECIPIENT NUMBER</th>
+                            <th className="py-2 px-3">MESSAGE PREVIEW</th>
+                            <th className="py-2 px-3 text-right">STATUS</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {whatsappLogs.length === 0 ? (
+                            <tr>
+                              <td colSpan={5} className="py-10 text-center text-white/35 text-[9px] uppercase tracking-widest">
+                                NO TRANSACTION LOGS RECORD IN TWILIO DB BUFFER
+                              </td>
+                            </tr>
+                          ) : (
+                            whatsappLogs.map((log, i) => (
+                              <tr key={i} className="border-b border-white/5 hover:bg-white/[0.02] transition-colors text-white/80">
+                                <td className="py-3 px-3 text-white/45">
+                                  {log.sent_at ? new Date(log.sent_at).toLocaleString() : 'N/A'}
+                                </td>
+                                <td className="py-3 px-3 font-bold text-white/90 uppercase">{log.message_type || 'DAILY_BRIEF'}</td>
+                                <td className="py-3 px-3 text-auris-cyan">{log.to_number || log.recipient}</td>
+                                <td className="py-3 px-3 max-w-xs truncate text-white/60" title={log.message_preview}>
+                                  {log.message_preview}
+                                </td>
+                                <td className="py-3 px-3 text-right">
+                                  <span className={`px-2 py-0.5 rounded text-[8px] uppercase font-bold ${
+                                    log.status === 'delivered' || log.status === 'sent'
+                                      ? 'bg-emerald-500/10 border border-emerald-500/30 text-emerald-400'
+                                      : 'bg-red-500/10 border border-red-500/30 text-red-400 animate-pulse'
+                                  }`}>
+                                    {log.status}
+                                  </span>
+                                </td>
+                              </tr>
+                            ))
+                          )}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                )}
+
+              </div>
+            </GlassCard>
+          )}
+        </div>
+
+      </div>
+
+      {/* 4-STEP ONBOARDING WIZARD MODAL */}
+      <AnimatePresence>
+        {showAddModal && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+            
+            {/* Backdrop */}
+            <motion.div 
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => {
+                if (addStep !== 4 && !window.confirm("Abandon onboarding wizard? The provision record will remain unconfigured.")) {
+                  return;
+                }
+                setShowAddModal(false);
+              }}
+              className="absolute inset-0 bg-black/85 backdrop-blur-md"
+            />
+
+            {/* Modal Body */}
+            <motion.div
+              initial={{ opacity: 0, scale: 0.9, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.9, y: 10 }}
+              className="relative w-full max-w-lg border border-auris-border bg-auris-card rounded-2xl overflow-hidden shadow-2xl p-6"
+            >
+              <div className="scanline" />
+
+              {/* Wizard Steps indicator */}
+              <div className="flex items-center justify-between border-b border-white/5 pb-4 mb-5">
+                <div>
+                  <h3 className="text-xs font-display uppercase tracking-widest text-white/90">AURIS System Onboarding</h3>
+                  <span className="text-[9px] font-mono text-white/35 block mt-0.5">Provisioning spatial streams in the core cluster.</span>
+                </div>
+                
+                {/* Steps pills */}
+                <div className="flex items-center gap-1 font-mono text-[9px]">
+                  {[1, 2, 3, 4].map((step) => {
+                    const isPassed = addStep > step;
+                    const isActive = addStep === step;
+                    return (
+                      <div
+                        key={step}
+                        className={`w-5 h-5 rounded-full flex items-center justify-center font-bold transition-all ${
+                          isPassed 
+                            ? 'bg-emerald-500 text-black' 
+                            : isActive 
+                              ? 'bg-auris-cyan text-black shadow-lg shadow-auris-cyan/20' 
+                              : 'bg-white/5 border border-white/10 text-white/30'
+                        }`}
+                      >
+                        {isPassed ? '✓' : step}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* STEP 1 FORM: Store Provisioning */}
+              {addStep === 1 && (
+                <form onSubmit={handleStep1Submit} className="space-y-4">
+                  <h4 className="text-[10px] font-mono text-auris-cyan uppercase tracking-widest mb-3">
+                    STEP 1: IDENTITY & LICENSING PROVISIONING
+                  </h4>
+                  
+                  <div className="space-y-3.5">
+                    <div className="flex flex-col gap-1.5">
+                      <label className="text-[8px] font-mono uppercase tracking-widest text-white/40">SYSTEM ID (No Spaces, lowercase)</label>
+                      <input
+                        type="text"
+                        required
+                        value={addForm.store_id}
+                        onChange={e => setAddForm({ ...addForm, store_id: e.target.value })}
+                        placeholder="e.g. factory_chennai_01 or retail_hub_delhi..."
+                        className="bg-black/50 border border-white/10 rounded-xl py-2.5 px-3.5 text-xs font-mono text-white placeholder-white/25 focus:border-auris-cyan/40 focus:outline-none transition-colors"
+                      />
+                    </div>
+
+                    <div className="flex flex-col gap-1.5">
+                      <label className="text-[8px] font-mono uppercase tracking-widest text-white/40">STORE / FACTORY DISPLAY NAME</label>
+                      <input
+                        type="text"
+                        required
+                        value={addForm.store_name}
+                        onChange={e => setAddForm({ ...addForm, store_name: e.target.value })}
+                        placeholder="e.g. Chennai Assembly Plant #1..."
+                        className="bg-black/50 border border-white/10 rounded-xl py-2.5 px-3.5 text-xs text-white placeholder-white/25 focus:border-auris-cyan/40 focus:outline-none transition-colors"
+                      />
+                    </div>
+
+                    <div className="flex flex-col gap-1.5">
+                      <label className="text-[8px] font-mono uppercase tracking-widest text-white/40">LOCATION CITY</label>
+                      <input
+                        type="text"
+                        value={addForm.city}
+                        onChange={e => setAddForm({ ...addForm, city: e.target.value })}
+                        placeholder="e.g. Chennai..."
+                        className="bg-black/50 border border-white/10 rounded-xl py-2.5 px-3.5 text-xs text-white placeholder-white/25 focus:border-auris-cyan/40 focus:outline-none transition-colors"
+                      />
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-4">
+                      <div className="flex flex-col gap-1.5">
+                        <label className="text-[8px] font-mono uppercase tracking-widest text-white/40">PLAN ROUTING SELECT</label>
+                        <div className="flex bg-black/40 border border-white/10 p-0.5 rounded-xl">
+                          {(['FACTORY', 'RETAIL', 'PILOT'] as const).map((plan) => (
+                            <button
+                              key={plan}
+                              type="button"
+                              onClick={() => setAddForm({ ...addForm, plan })}
+                              className={`flex-1 py-2 text-[8px] font-mono tracking-wider font-bold rounded-lg uppercase transition-all cursor-pointer ${
+                                addForm.plan === plan
+                                  ? 'bg-auris-cyan text-black shadow'
+                                  : 'text-white/40 hover:text-white'
+                              }`}
+                            >
+                              {plan}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+
+                      <div className="flex flex-col gap-1.5">
+                        <label className="text-[8px] font-mono uppercase tracking-widest text-white/40">ENCRYPTION / ACCESS KEY</label>
+                        <input
+                          type="password"
+                          required
+                          value={addForm.password}
+                          onChange={e => setAddForm({ ...addForm, password: e.target.value })}
+                          placeholder="PASSWORD IDENTIFIER..."
+                          className="bg-black/50 border border-white/10 rounded-xl py-2.5 px-3.5 text-xs font-mono text-white placeholder-white/25 focus:border-auris-cyan/40 focus:outline-none transition-colors"
+                        />
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="flex justify-end gap-3 pt-5 border-t border-white/5 mt-5">
+                    <button
+                      type="button"
+                      onClick={() => setShowAddModal(false)}
+                      className="px-4 py-2 border border-white/10 hover:border-white/20 bg-white/5 rounded-xl text-white/60 hover:text-white text-[10px] font-mono uppercase font-bold tracking-wider cursor-pointer"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="submit"
+                      className="px-5 py-2 border border-auris-cyan/35 bg-auris-cyan/10 hover:bg-auris-cyan/20 text-auris-cyan rounded-xl text-[10px] font-mono uppercase font-bold tracking-wider cursor-pointer"
+                    >
+                      Provision Client
+                    </button>
+                  </div>
+                </form>
+              )}
+
+              {/* STEP 2 FORM: Factory Configuration (Only Factory Plan) */}
+              {addStep === 2 && (
+                <form onSubmit={handleStep2Submit} className="space-y-4">
+                  <h4 className="text-[10px] font-mono text-auris-cyan uppercase tracking-widest mb-3">
+                    STEP 2: OPERATIONS & SHIFTS CONFIG MATRIX
+                  </h4>
+
+                  <div className="space-y-3.5 max-h-[380px] overflow-y-auto pr-1 custom-scrollbar">
+                    
+                    <div className="grid grid-cols-2 gap-4">
+                      <div className="flex flex-col gap-1.5">
+                        <label className="text-[8px] font-mono uppercase tracking-widest text-white/40">NUMBER OF OPERATIONAL SHIFTS</label>
+                        <select
+                          value={addForm.numShifts}
+                          onChange={e => setAddForm({ ...addForm, numShifts: Number(e.target.value) })}
+                          className="bg-black/50 border border-white/10 rounded-xl py-2 px-3 text-xs font-mono text-white focus:border-auris-cyan/40 focus:outline-none"
+                        >
+                          <option value={1} className="bg-black">1 SHIFT SCHEDULE</option>
+                          <option value={2} className="bg-black">2 SHIFTS SCHEDULE</option>
+                          <option value={3} className="bg-black">3 SHIFTS SCHEDULE</option>
+                        </select>
+                      </div>
+
+                      <div className="flex flex-col gap-1.5">
+                        <label className="text-[8px] font-mono uppercase tracking-widest text-white/40">WHATSAPP TARGET NUMBER</label>
+                        <input
+                          type="text"
+                          required
+                          value={addForm.whatsAppNumber}
+                          onChange={e => setAddForm({ ...addForm, whatsAppNumber: e.target.value })}
+                          placeholder="e.g. +91XXXXXXXXXX..."
+                          className="bg-black/50 border border-white/10 rounded-xl py-2.5 px-3.5 text-xs font-mono text-white placeholder-white/25 focus:border-auris-cyan/40 focus:outline-none transition-colors"
+                        />
+                      </div>
+                    </div>
+
+                    {/* Shifts Details Fields dynamically */}
+                    <div className="space-y-2">
+                      <span className="text-[8px] font-mono uppercase tracking-widest text-white/30 block mb-1">
+                        SHIFT DETAILS (TIME INTERVALS)
+                      </span>
+                      {[...Array(Number(addForm.numShifts))].map((_, i) => (
+                        <div key={i} className="p-3 border border-white/5 bg-black/25 rounded-xl grid grid-cols-3 gap-3">
+                          <div className="flex flex-col gap-1">
+                            <span className="text-[7px] font-mono text-white/40 uppercase">LABEL</span>
+                            <input
+                              type="text"
+                              value={addForm.shifts[i]?.label || `Shift #${i+1}`}
+                              onChange={e => {
+                                const copy = [...addForm.shifts];
+                                if (!copy[i]) copy[i] = { label: '', startTime: '09:00', endTime: '17:00', days: { Mon: true, Tue: true, Wed: true, Thu: true, Fri: true, Sat: true, Sun: false } };
+                                copy[i].label = e.target.value;
+                                setAddForm({ ...addForm, shifts: copy });
+                              }}
+                              className="bg-black border border-white/10 rounded py-1 px-2 text-[10px] text-white focus:outline-none"
+                            />
+                          </div>
+                          <div className="flex flex-col gap-1">
+                            <span className="text-[7px] font-mono text-white/40 uppercase">START TIME</span>
+                            <input
+                              type="text"
+                              value={addForm.shifts[i]?.startTime || '09:00'}
+                              onChange={e => {
+                                const copy = [...addForm.shifts];
+                                if (!copy[i]) copy[i] = { label: `Shift #${i+1}`, startTime: '', endTime: '17:00', days: { Mon: true, Tue: true, Wed: true, Thu: true, Fri: true, Sat: true, Sun: false } };
+                                copy[i].startTime = e.target.value;
+                                setAddForm({ ...addForm, shifts: copy });
+                              }}
+                              className="bg-black border border-white/10 rounded py-1 px-2 text-[10px] font-mono text-white focus:outline-none"
+                            />
+                          </div>
+                          <div className="flex flex-col gap-1">
+                            <span className="text-[7px] font-mono text-white/40 uppercase">END TIME</span>
+                            <input
+                              type="text"
+                              value={addForm.shifts[i]?.endTime || '17:00'}
+                              onChange={e => {
+                                const copy = [...addForm.shifts];
+                                if (!copy[i]) copy[i] = { label: `Shift #${i+1}`, startTime: '09:00', endTime: '', days: { Mon: true, Tue: true, Wed: true, Thu: true, Fri: true, Sat: true, Sun: false } };
+                                copy[i].endTime = e.target.value;
+                                setAddForm({ ...addForm, shifts: copy });
+                              }}
+                              className="bg-black border border-white/10 rounded py-1 px-2 text-[10px] font-mono text-white focus:outline-none"
+                            />
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+
+                    {/* Hourly wages */}
+                    <div className="space-y-2">
+                      <span className="text-[8px] font-mono uppercase tracking-widest text-white/30 block">
+                        HOURLY OPERATION WAGES SCHEDULE (INR)
+                      </span>
+                      <div className="grid grid-cols-3 gap-3">
+                        <div className="flex flex-col gap-1">
+                          <span className="text-[7px] font-mono text-white/45 uppercase">OPERATOR RATE</span>
+                          <input
+                            type="number"
+                            value={addForm.operatorWage}
+                            onChange={e => setAddForm({ ...addForm, operatorWage: Number(e.target.value) })}
+                            className="bg-black border border-white/10 rounded-xl py-2 px-3 text-xs font-mono text-white focus:outline-none text-center"
+                          />
+                        </div>
+                        <div className="flex flex-col gap-1">
+                          <span className="text-[7px] font-mono text-white/45 uppercase">SUPERVISOR RATE</span>
+                          <input
+                            type="number"
+                            value={addForm.supervisorWage}
+                            onChange={e => setAddForm({ ...addForm, supervisorWage: Number(e.target.value) })}
+                            className="bg-black border border-white/10 rounded-xl py-2 px-3 text-xs font-mono text-white focus:outline-none text-center"
+                          />
+                        </div>
+                        <div className="flex flex-col gap-1">
+                          <span className="text-[7px] font-mono text-white/45 uppercase">CONTRACTOR RATE</span>
+                          <input
+                            type="number"
+                            value={addForm.contractorWage}
+                            onChange={e => setAddForm({ ...addForm, contractorWage: Number(e.target.value) })}
+                            className="bg-black border border-white/10 rounded-xl py-2 px-3 text-xs font-mono text-white focus:outline-none text-center"
+                          />
+                        </div>
+                      </div>
+                    </div>
+
+                  </div>
+
+                  <div className="flex justify-end gap-3 pt-5 border-t border-white/5 mt-5">
+                    <button
+                      type="button"
+                      onClick={() => setAddStep(4)}
+                      className="px-4 py-2 border border-white/10 hover:border-white/20 bg-white/5 rounded-xl text-white/60 hover:text-white text-[10px] font-mono uppercase font-bold tracking-wider cursor-pointer"
+                    >
+                      Skip Onboarding
+                    </button>
+                    <button
+                      type="submit"
+                      className="px-5 py-2 border border-auris-cyan/35 bg-auris-cyan/10 hover:bg-auris-cyan/20 text-auris-cyan rounded-xl text-[10px] font-mono uppercase font-bold tracking-wider cursor-pointer"
+                    >
+                      Save Configuration
+                    </button>
+                  </div>
+                </form>
+              )}
+
+              {/* STEP 3: Floor plan upload */}
+              {addStep === 3 && (
+                <div className="space-y-5 text-center py-6">
+                  <h4 className="text-[10px] font-mono text-auris-cyan uppercase tracking-widest text-left">
+                    STEP 3: CONFIGURATION MATRIX MAPPING & FLOOR PLAN
+                  </h4>
+
+                  <div className="border border-dashed border-white/15 bg-black/25 rounded-2xl p-8 flex flex-col items-center justify-center gap-3">
+                    <FileUp className="w-8 h-8 text-white/20" />
+                    <div>
+                      <h5 className="text-[11px] font-mono text-white/80 font-bold uppercase">Upload JSON floor plan scan</h5>
+                      <p className="text-[9px] text-white/40 mt-1 max-w-xs leading-relaxed">
+                        Attach the parsed scan configuration file (.json) defining physical bounding boxes, cameras mapping, and zone vectors coordinates.
+                      </p>
+                    </div>
+
+                    <label className="px-4 py-2 border border-auris-cyan/30 bg-auris-cyan/5 text-auris-cyan hover:bg-auris-cyan/15 rounded-xl text-[10px] font-mono uppercase font-bold tracking-wider transition-colors cursor-pointer mt-2 block">
+                      Browse Local Files
+                      <input
+                        type="file"
+                        accept=".json"
+                        onChange={handleFloorplanUpload}
+                        className="hidden"
+                      />
+                    </label>
+                  </div>
+
+                  <div className="flex justify-end gap-3 pt-5 border-t border-white/5 mt-5">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setAddStep(4);
+                        fetchClients();
+                      }}
+                      className="px-5 py-2 border border-auris-cyan/35 bg-auris-cyan/10 hover:bg-auris-cyan/20 text-auris-cyan rounded-xl text-[10px] font-mono uppercase font-bold tracking-wider cursor-pointer"
+                    >
+                      Skip & Done
+                    </button>
+                  </div>
                 </div>
               )}
-            </AnimatePresence>
-        </div>
-    );
+
+              {/* STEP 4: Success credentials display */}
+              {addStep === 4 && (
+                <div className="space-y-5">
+                  <div className="text-center py-4 flex flex-col items-center justify-center gap-2">
+                    <div className="w-10 h-10 rounded-full bg-emerald-500/10 border border-emerald-500/30 flex items-center justify-center text-emerald-400 mb-2">
+                      <Check className="w-5 h-5" />
+                    </div>
+                    <h4 className="text-xs font-display uppercase tracking-widest text-emerald-400 font-bold">CLIENT PORTAL ONBOARD SYNCED</h4>
+                    <p className="text-[9px] text-white/40 max-w-xs mt-1">
+                      Personnel credentials and system encryption keys successfully registered to core database cluster.
+                    </p>
+                  </div>
+
+                  <div className="space-y-3">
+                    <div className="p-3 bg-black/30 border border-white/5 rounded-xl flex items-center justify-between text-[10px] font-mono">
+                      <div>
+                        <span className="text-[7px] text-white/35 uppercase block">CLIENT SYSTEM ID</span>
+                        <span className="text-white/80 font-bold select-all">{createdCredentials?.store_id}</span>
+                      </div>
+                      <button 
+                        onClick={() => handleCopy(createdCredentials?.store_id || '', 'System ID')}
+                        className="p-1.5 border border-white/10 rounded text-white/50 hover:text-white cursor-pointer"
+                      >
+                        <Copy className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+
+                    <div className="p-3 bg-black/30 border border-white/5 rounded-xl flex items-center justify-between text-[10px] font-mono">
+                      <div>
+                        <span className="text-[7px] text-white/35 uppercase block">ENCRYPTION ACCESS KEY (PASSWORD)</span>
+                        <span className="text-white/80 font-bold select-all">{createdCredentials?.password}</span>
+                      </div>
+                      <button 
+                        onClick={() => handleCopy(createdCredentials?.password || '', 'Password')}
+                        className="p-1.5 border border-white/10 rounded text-white/50 hover:text-white cursor-pointer"
+                      >
+                        <Copy className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+
+                    <div className="p-3 bg-black/30 border border-white/5 rounded-xl flex items-center justify-between text-[10px] font-mono">
+                      <div className="max-w-[85%]">
+                        <span className="text-[7px] text-white/35 uppercase block">CLOUD STREAM API KEY (SECRET)</span>
+                        <span className="text-auris-cyan font-bold truncate block select-all">{createdCredentials?.api_key}</span>
+                      </div>
+                      <button 
+                        onClick={() => handleCopy(createdCredentials?.api_key || '', 'API Key')}
+                        className="p-1.5 border border-white/10 rounded text-white/50 hover:text-white cursor-pointer"
+                      >
+                        <Copy className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  </div>
+
+                  <p className="text-[8px] text-white/30 leading-relaxed font-sans text-center">
+                    Copy and deliver these credentials securely. Ensure edge processing devices are configured with the secret API Key for streaming data.
+                  </p>
+
+                  <div className="flex justify-center pt-3 border-t border-white/5 mt-5">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setShowAddModal(false);
+                        fetchClients();
+                      }}
+                      className="px-6 py-2 bg-auris-cyan text-black font-mono uppercase font-bold text-[10px] tracking-wider rounded-xl hover:bg-auris-cyan/85 cursor-pointer shadow-lg shadow-auris-cyan/15"
+                    >
+                      Registry Database Synced
+                    </button>
+                  </div>
+                </div>
+              )}
+
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+    </div>
+  );
 };
+
+
 
 // --- MAIN LOGIN ---
 const Login = ({ onLogin }: { onLogin: (s: string, p: string, name: string) => void }) => {
@@ -1520,7 +2873,7 @@ const Login = ({ onLogin }: { onLogin: (s: string, p: string, name: string) => v
                 <Lock className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-white/20" />
                 <input 
                   type="password" 
-                  placeholder="••••••••" 
+                  placeholder="" 
                   value={pwd}
                   onChange={e => setPwd(e.target.value)}
                   className="w-full bg-white/5 border border-white/10 rounded-xl pl-12 pr-4 py-4 text-sm focus:outline-none focus:border-auris-cyan/50 transition-all text-white" 

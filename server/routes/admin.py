@@ -18,6 +18,10 @@ class UpdatePersonaRequest(BaseModel):
     instructions: str
 
 
+class UpdatePasswordRequest(BaseModel):
+    password: str
+
+
 class CreateStoreRequest(BaseModel):
     store_id: str
     store_name: str
@@ -83,6 +87,34 @@ async def delete_store(request: Request, store_id: str):
     await db.blobs.delete_many({"store_id": store_id})
     await db.cameras.delete_many({"store_id": store_id})
     return {"status": "deleted", "store_id": store_id}
+
+
+@router.get("/admin/stores/{store_id}")
+async def get_store_details(request: Request, store_id: str):
+    require_admin(request)
+    store = await db.stores.find_one({"store_id": store_id})
+    if not store:
+        raise HTTPException(status_code=404, detail="Store not found")
+    return {
+        "store_id": store["store_id"],
+        "store_name": store.get("store_name", store["store_id"]),
+        "api_key": store.get("api_key", ""),
+        "spatial_status": store.get("spatial_status", "pending"),
+        "created_at": store.get("created_at"),
+        "ai_instructions": store.get("ai_instructions", ""),
+    }
+
+
+@router.patch("/admin/stores/{store_id}")
+async def update_store_password(request: Request, store_id: str, body: UpdatePasswordRequest):
+    require_admin(request)
+    result = await db.stores.update_one(
+        {"store_id": store_id},
+        {"$set": {"password_hash": hash_password(body.password)}}
+    )
+    if result.matched_count == 0:
+        raise HTTPException(status_code=404, detail="Store not found")
+    return {"status": "password updated", "store_id": store_id}
 
 
 @router.post("/admin/stores/{store_id}/persona")
