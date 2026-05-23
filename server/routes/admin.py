@@ -1,11 +1,38 @@
 import os
 from typing import Optional
 from fastapi import APIRouter, HTTPException, Request
+from fastapi.responses import PlainTextResponse
 from pydantic import BaseModel
 
 from db import db, hash_password, generate_api_key, ADMIN_KEY
 
 router = APIRouter()
+
+
+@router.get("/install.sh", response_class=PlainTextResponse)
+async def get_install_script():
+    """
+    Returns the edge/setup.sh installation script as plain text.
+    No authentication is required.
+    """
+    paths_to_try = [
+        os.path.join(os.path.dirname(__file__), "..", "..", "edge", "setup.sh"),
+        os.path.join(os.getcwd(), "edge", "setup.sh"),
+        os.path.join(os.getcwd(), "..", "edge", "setup.sh"),
+        "edge/setup.sh",
+    ]
+    
+    for path in paths_to_try:
+        if os.path.exists(path):
+            try:
+                with open(path, "r", encoding="utf-8") as f:
+                    content = f.read()
+                return content
+            except Exception:
+                continue
+                
+    raise HTTPException(status_code=404, detail="Installation script not found on server")
+
 
 
 def require_admin(request: Request):
@@ -34,12 +61,32 @@ async def list_stores(request: Request):
     cursor = db.stores.find({}, {"password_hash": 0, "api_key": 0})
     stores = []
     async for s in cursor:
+        store_id = s["store_id"]
+        
+        # Count cameras configured for this store
+        cameras_count = 0
+        try:
+            cameras_count = await db.cameras.count_documents({"store_id": store_id})
+        except Exception:
+            pass
+            
+        # Get the latest telemetry blob timestamp
+        last_blob = None
+        try:
+            last_blob_doc = await db.blobs.find_one({"store_id": store_id}, sort=[("timestamp", -1)])
+            if last_blob_doc:
+                last_blob = last_blob_doc.get("timestamp")
+        except Exception:
+            pass
+
         stores.append({
-            "store_id": s["store_id"],
-            "store_name": s.get("store_name", s["store_id"]),
+            "store_id": store_id,
+            "store_name": s.get("store_name", store_id),
             "created_at": s.get("created_at"),
             "ai_instructions": s.get("ai_instructions", ""),
             "spatial_status": s.get("spatial_status", "pending"),
+            "cameras_count": cameras_count,
+            "last_blob": last_blob,
         })
     return {"stores": stores}
 

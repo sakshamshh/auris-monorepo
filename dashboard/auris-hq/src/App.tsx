@@ -112,61 +112,157 @@ const MetricCard = ({ label, value, unit, trend, icon, cyan = false }: any) => (
   </GlassCard>
 );
 
-// 2. TAB: MISSION CONTROL
-const MissionControlTab = ({ onSelectStore }: { onSelectStore: (id: string) => void }) => {
-  const [stores, setStores] = useState<Store[]>([]);
+/// 2. TAB: MISSION CONTROL
+const GlobalHealthDashboard = ({ 
+  onSelectStore, 
+  onSelectRegistryClient 
+}: { 
+  onSelectStore: (id: string) => void;
+  onSelectRegistryClient: (id: string) => void;
+}) => {
+  const [clients, setClients] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
-  const [globalStats, setGlobalStats] = useState({ tracks: 142, cameras: 84, alerts: 3 });
+  const [timeLeft, setTimeLeft] = useState(30);
 
-  useEffect(() => {
-    const fetchStores = async () => {
+  const fetchTelemetry = async () => {
+    try {
+      const storesRes = await fetch(`${API_BASE}/admin/stores`, {
+        headers: { 'X-Admin-Key': ADMIN_KEY }
+      });
+      if (!storesRes.ok) throw new Error("Failed to load stores");
+      const storesData = await storesRes.json();
+
+      let configsData = { configs: [] };
       try {
-        const res = await fetch(`${API_BASE}/admin/stores`, {
+        const configsRes = await fetch(`${API_BASE}/api/factory/configs`, {
           headers: { 'X-Admin-Key': ADMIN_KEY }
         });
-        const data = await res.json();
-        if (data && Array.isArray(data.stores)) {
-          setStores(data.stores.map((s: any) => ({
-            store_id: s.store_id,
-            store_name: s.store_name || s.store_id,
-            status: 'online',
-            cameras_count: s.cameras_count || 4,
-            last_blob: '2s ago',
-            calibrated: true,
-            plan: s.store_id.includes('factory') ? 'factory' : 'retail'
-          })));
-          // Compute aggregates
-          const totalNodes = data.stores.reduce((acc: number, val: any) => acc + (val.cameras_count || 4), 0);
-          setGlobalStats({
-            tracks: Math.floor(Math.random() * 30) + 15,
-            cameras: totalNodes,
-            alerts: 1
-          });
+        if (configsRes.ok) {
+          configsData = await configsRes.json();
         }
-      } catch (e) {
-        console.error("Failed to load stores: ", e);
-      } finally {
-        setLoading(false);
+      } catch (err) {
+        console.error("Failed to load factory configs in overwatch", err);
       }
+
+      const merged = (storesData.stores || []).map((store: any) => {
+        const config = configsData.configs.find((c: any) => c.store_id === store.store_id);
+        const plan = config ? 'FACTORY' : (store.store_id.includes('retail') ? 'RETAIL' : 'PILOT');
+        const status = config ? config.status : 'live';
+        
+        let statusColor = 'gray';
+        if (status === 'suspended' || status === 'pending') {
+          statusColor = 'red';
+        } else if (status === 'live') {
+          if (!store.last_blob) {
+            statusColor = 'gray';
+          } else {
+            const lastBlobDate = new Date(store.last_blob);
+            const diffMs = Date.now() - lastBlobDate.getTime();
+            const diffMins = diffMs / (1000 * 60);
+            if (diffMins < 10) {
+              statusColor = 'green';
+            } else {
+              statusColor = 'amber';
+            }
+          }
+        }
+
+        return {
+          ...store,
+          plan,
+          status,
+          statusColor,
+          factoryConfig: config || null
+        };
+      });
+
+      setClients(merged);
+    } catch (e) {
+      console.error("Failed to load overwatch telemetry:", e);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchTelemetry();
+    
+    const refreshInterval = setInterval(() => {
+      fetchTelemetry();
+      setTimeLeft(30);
+    }, 30000);
+
+    const countdownInterval = setInterval(() => {
+      setTimeLeft(prev => {
+        if (prev <= 1) return 30;
+        return prev - 1;
+      });
+    }, 1000);
+
+    return () => {
+      clearInterval(refreshInterval);
+      clearInterval(countdownInterval);
     };
-    fetchStores();
-    const interval = setInterval(fetchStores, 30000);
-    return () => clearInterval(interval);
   }, []);
 
+  const formatLastActivity = (timestamp: string | null) => {
+    if (!timestamp) return "no data yet";
+    const date = new Date(timestamp);
+    const diffMs = Date.now() - date.getTime();
+    const diffMins = Math.floor(diffMs / (1000 * 60));
+    if (diffMins < 1) return "just now";
+    if (diffMins < 60) return `${diffMins} min ago`;
+    const diffHours = Math.floor(diffMins / 60);
+    if (diffHours < 24) return `${diffHours} hr${diffHours > 1 ? 's' : ''} ago`;
+    const diffDays = Math.floor(diffHours / 24);
+    return `${diffDays} day${diffDays > 1 ? 's' : ''} ago`;
+  };
+
+  const totalClients = clients.length;
+  const greenCount = clients.filter(c => c.statusColor === 'green').length;
+  const amberCount = clients.filter(c => c.statusColor === 'amber').length;
+  const redCount = clients.filter(c => c.statusColor === 'red').length;
+
   return (
-    <div className="h-full flex flex-col p-4 md:p-8 overflow-y-auto custom-scrollbar">
-      <header className="flex flex-col md:flex-row justify-between items-start md:items-end mb-8 md:mb-12 gap-6 md:gap-4">
+    <div className="h-full flex flex-col p-4 md:p-8 overflow-y-auto custom-scrollbar bg-auris-bg">
+      <header className="flex flex-col md:flex-row justify-between items-start md:items-end mb-8 md:mb-12 gap-6 md:gap-4 border-b border-white/5 pb-6">
         <div>
           <h2 className="text-[10px] uppercase tracking-[0.4em] font-mono text-auris-cyan">AURIS GLOBAL OVERWATCH</h2>
           <h1 className="text-4xl font-display font-light mt-2 tracking-tight uppercase">Mission Control</h1>
         </div>
-        <div className="flex flex-col md:flex-row gap-4 md:gap-6 w-full md:w-auto">
-          <MetricCard label="Total Live Presence" value={globalStats.tracks} unit="PEOPLE" icon={<Users className="w-3 h-3 text-auris-cyan" />} cyan />
-          <MetricCard label="Active Nodes" value={globalStats.cameras} unit="DEVICES" icon={<Camera className="w-3 h-3" />} />
-          <MetricCard label="System Health" value="OPTIMAL" unit="" trend="NOMINAL" icon={<Activity className="w-3 h-3" />} />
+        <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-black/40 border border-white/5 font-mono text-[9px] text-white/50 tracking-wider">
+          <RefreshCw className="w-3 h-3 animate-spin text-auris-cyan mr-1" />
+          Refreshing in <span className="text-auris-cyan font-bold">{timeLeft}s</span>
         </div>
       </header>
+
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
+        <GlassCard className="p-4 flex flex-col">
+          <span className="text-[8px] font-mono uppercase tracking-widest text-white/35">Total Clients</span>
+          <span className="text-2xl font-display text-white/90 mt-1">{totalClients}</span>
+        </GlassCard>
+        <GlassCard className="p-4 flex flex-col relative overflow-hidden group">
+          <div className="absolute top-0 right-0 w-12 h-12 bg-emerald-500/5 rounded-bl-full flex items-center justify-center">
+            <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+          </div>
+          <span className="text-[8px] font-mono uppercase tracking-widest text-emerald-400/80">Live</span>
+          <span className="text-2xl font-display text-emerald-400 mt-1">{greenCount}</span>
+        </GlassCard>
+        <GlassCard className="p-4 flex flex-col relative overflow-hidden">
+          <div className="absolute top-0 right-0 w-12 h-12 bg-auris-orange/5 rounded-bl-full flex items-center justify-center">
+            <span className="w-1.5 h-1.5 rounded-full bg-auris-orange animate-pulse" />
+          </div>
+          <span className="text-[8px] font-mono uppercase tracking-widest text-auris-orange/80">Pending</span>
+          <span className="text-2xl font-display text-auris-orange mt-1">{amberCount}</span>
+        </GlassCard>
+        <GlassCard className="p-4 flex flex-col relative overflow-hidden">
+          <div className="absolute top-0 right-0 w-12 h-12 bg-red-500/5 rounded-bl-full flex items-center justify-center">
+            <span className="w-1.5 h-1.5 rounded-full bg-red-500 animate-pulse" />
+          </div>
+          <span className="text-[8px] font-mono uppercase tracking-widest text-red-400/80">Offline</span>
+          <span className="text-2xl font-display text-red-400 mt-1">{redCount}</span>
+        </GlassCard>
+      </div>
 
       {loading ? (
         <div className="flex-1 flex items-center justify-center font-mono text-xs text-white/40">
@@ -175,71 +271,106 @@ const MissionControlTab = ({ onSelectStore }: { onSelectStore: (id: string) => v
         </div>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4 gap-6">
-          {stores.map(store => (
-            <GlassCard 
-              key={store.store_id} 
-              className="p-6 group relative"
-              glow={store.status === 'online'}
-              onClick={() => onSelectStore(store.store_id)}
-            >
-              <div className="flex justify-between items-start mb-6">
-                 <div className={`p-3 rounded-xl border ${store.status === 'online' ? 'bg-auris-cyan/10 border-auris-cyan/30 text-auris-cyan' : 'bg-white/5 border-white/10 text-white/20'}`}>
-                   {store.plan === 'factory' ? <LayoutGrid className="w-5 h-5" /> : <Globe className="w-5 h-5" />}
-                 </div>
-                 <div className="flex flex-col items-end">
-                    <div className={`text-[8px] font-mono font-bold px-2 py-0.5 rounded ${store.status === 'online' ? 'bg-auris-cyan text-black' : 'bg-white/10 text-white/40'}`}>
-                      {store.status.toUpperCase()}
-                    </div>
-                    <div className="text-[9px] font-mono text-white/20 mt-1 uppercase">{store.store_id}</div>
-                 </div>
-              </div>
+          {clients.map(client => {
+            const isFactory = client.plan === 'FACTORY';
+            const trialStart = client.factoryConfig?.trial_start;
+            let trialDay = 1;
+            let trialPercent = 3.33;
+            if (isFactory && trialStart) {
+              const start = new Date(trialStart);
+              const diffMs = Date.now() - start.getTime();
+              trialDay = Math.max(1, Math.min(30, Math.ceil(diffMs / 86400000)));
+              trialPercent = (trialDay / 30) * 100;
+            }
 
-              <h3 className="text-lg font-display mb-2 group-hover:text-auris-cyan transition-colors">{store.store_name}</h3>
-              
-              <div className="space-y-3 mt-6">
-                 <div className="flex justify-between text-[10px] font-mono">
-                    <span className="text-white/30">LATEST TELEMETRY</span>
-                    <span className="text-white/60">{store.last_blob}</span>
-                 </div>
-                 <div className="w-full h-px bg-white/5" />
-                 <div className="grid grid-cols-2 gap-4">
+            return (
+              <GlassCard 
+                key={client.store_id} 
+                className="p-6 group relative border border-white/5 hover:border-auris-cyan/35 transition-all duration-300 shadow-xl hover:shadow-[0_0_20px_rgba(0,255,255,0.05)]"
+                onClick={() => onSelectRegistryClient(client.store_id)}
+              >
+                <div className="absolute top-6 right-6 flex items-center gap-1.5">
+                  <span className={`w-3.5 h-3.5 rounded-full shadow-[0_0_10px_currentColor] ${
+                    client.statusColor === 'green' 
+                      ? 'text-emerald-500 bg-emerald-500' 
+                      : client.statusColor === 'amber'
+                        ? 'text-auris-orange bg-auris-orange'
+                        : client.statusColor === 'red'
+                          ? 'text-red-500 bg-red-500'
+                          : 'text-white/20 bg-white/10'
+                  }`} />
+                </div>
+
+                <div className="flex justify-between items-start mb-4">
+                  <div className="flex flex-col gap-1.5">
+                    <span className="text-[9px] font-mono font-bold px-2 py-0.5 rounded bg-auris-cyan/10 border border-auris-cyan/30 text-auris-cyan w-fit uppercase tracking-wider">
+                      {client.plan}
+                    </span>
+                    <span className="text-[9px] font-mono text-white/30 tracking-wider uppercase mt-1">
+                      ID: {client.store_id}
+                    </span>
+                  </div>
+                </div>
+
+                <h3 className="text-xl font-display font-medium mb-4 group-hover:text-auris-cyan transition-colors truncate pr-8">
+                  {client.store_name}
+                </h3>
+                
+                <div className="space-y-4">
+                  {isFactory && trialStart && (
+                    <div className="space-y-1">
+                      <div className="flex justify-between text-[8px] font-mono text-white/30 uppercase tracking-wider">
+                        <span>Trial Duration</span>
+                        <span className="text-auris-cyan">Day {trialDay} of 30</span>
+                      </div>
+                      <div className="w-full h-1.5 bg-black/40 rounded-full overflow-hidden border border-white/5">
+                        <div 
+                          className="h-full bg-gradient-to-r from-auris-cyan to-blue-500 rounded-full transition-all duration-500" 
+                          style={{ width: `${trialPercent}%` }}
+                        />
+                      </div>
+                    </div>
+                  )}
+
+                  <div className="w-full h-px bg-white/5" />
+                  
+                  <div className="grid grid-cols-2 gap-4">
                     <div>
-                      <div className="text-[8px] text-white/20 uppercase tracking-widest mb-1">Live Tracks</div>
-                      <div className="text-xl font-display text-white/90">
-                        {store.status === 'online' ? Math.floor(Math.random() * 8) + 1 : 0}
+                      <div className="text-[8px] text-white/25 uppercase tracking-widest font-mono">Last Activity</div>
+                      <div className="text-xs font-mono text-white/80 mt-1 font-medium">
+                        {formatLastActivity(client.last_blob)}
                       </div>
                     </div>
                     <div>
-                      <div className="text-[8px] text-white/20 uppercase tracking-widest mb-1">Nodes</div>
-                      <div className="text-xl font-display text-white/90">{store.cameras_count}</div>
+                      <div className="text-[8px] text-white/25 uppercase tracking-widest font-mono">Nodes</div>
+                      <div className="text-xs font-mono text-white/80 mt-1 font-medium flex items-center gap-1">
+                        <Camera className="w-3 h-3 text-white/40" />
+                        {client.cameras_count || 0} camera{client.cameras_count !== 1 ? 's' : ''}
+                      </div>
                     </div>
-                 </div>
-              </div>
-
-              <div className="absolute top-0 right-0 p-4 opacity-0 group-hover:opacity-100 transition-opacity translate-x-2 group-hover:translate-x-0">
-                 <ChevronRight className="w-5 h-5 text-auris-cyan" />
-              </div>
-
-              {store.status === 'online' && (
-                <div className="mt-6 h-12 relative rounded-lg border border-white/5 overflow-hidden bg-black/40">
-                   <div className="absolute inset-0 opacity-20">
-                      <svg width="100%" height="100%" className="text-auris-cyan">
-                         <path d="M0 20 Q 50 10 100 40 T 200 20" fill="none" stroke="currentColor" strokeWidth="1" />
-                         <circle cx="40" cy="15" r="2" fill="currentColor" />
-                         <circle cx="120" cy="25" r="2" fill="currentColor" />
-                      </svg>
-                   </div>
-                   <div className="absolute inset-x-0 bottom-0 py-1 bg-auris-cyan/10 text-[7px] text-center uppercase tracking-[0.3em] text-auris-cyan font-bold">
-                      Real-time Link Established
-                   </div>
+                  </div>
                 </div>
-              )}
-            </GlassCard>
-          ))}
+
+                <div className="absolute bottom-6 right-6 opacity-0 group-hover:opacity-100 transition-all duration-300 translate-x-2 group-hover:translate-x-0">
+                  <ChevronRight className="w-4 h-4 text-auris-cyan" />
+                </div>
+              </GlassCard>
+            );
+          })}
         </div>
       )}
     </div>
   );
+};
+
+const MissionControlTab = ({ 
+  onSelectStore, 
+  onSelectRegistryClient 
+}: { 
+  onSelectStore: (id: string) => void;
+  onSelectRegistryClient: (id: string) => void;
+}) => {
+  return <GlobalHealthDashboard onSelectStore={onSelectStore} onSelectRegistryClient={onSelectRegistryClient} />;
 };
 
 // 3. TAB: DASHBOARD (GTA MINIMAP)
@@ -1269,16 +1400,52 @@ const FactoryOnboardingView = ({ storeId: initialStoreId }: { storeId: string | 
 
 
 // --- CLIENT MANAGEMENT (REGISTRY) TAB ---
-const ManagementTab = ({ onSelectStore }: { onSelectStore: (id: string) => void }) => {
+const ManagementTab = ({ 
+  onSelectStore, 
+  initialSelectedClient, 
+  clearInitialClient 
+}: { 
+  onSelectStore: (id: string) => void;
+  initialSelectedClient?: string | null;
+  clearInitialClient?: () => void;
+}) => {
   const [clients, setClients] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [selectedClient, setSelectedClient] = useState<string | null>(null);
   const [clientTab, setClientTab] = useState<'overview' | 'system' | 'zones' | 'analytics' | 'logs'>('overview');
+
+  useEffect(() => {
+    if (initialSelectedClient) {
+      setSelectedClient(initialSelectedClient);
+      if (clearInitialClient) clearInitialClient();
+    }
+  }, [initialSelectedClient]);
   const [searchQuery, setSearchQuery] = useState('');
   
   // Modal states
   const [showAddModal, setShowAddModal] = useState(false);
-  const [addStep, setAddStep] = useState<1 | 2 | 3 | 4>(1);
+  const [addStep, setAddStep] = useState<number>(1);
+  const [numCameras, setNumCameras] = useState<number>(1);
+  const [camerasList, setCamerasList] = useState<Array<{ camera_id: string; label: string; rtsp_url: string; fps: number }>>([
+    { camera_id: 'cam1', label: '', rtsp_url: '', fps: 2 }
+  ]);
+  const [showEditCamerasModal, setShowEditCamerasModal] = useState(false);
+
+  const handleNumCamerasChange = (n: number) => {
+    setNumCameras(n);
+    setCamerasList(prev => {
+      const copy = [...prev];
+      if (copy.length < n) {
+        for (let i = copy.length; i < n; i++) {
+          copy.push({ camera_id: `cam${i + 1}`, label: '', rtsp_url: '', fps: 2 });
+        }
+      } else if (copy.length > n) {
+        return copy.slice(0, n);
+      }
+      return copy;
+    });
+  };
+
   const [addForm, setAddForm] = useState({
     store_id: '',
     store_name: '',
@@ -1516,6 +1683,31 @@ const ManagementTab = ({ onSelectStore }: { onSelectStore: (id: string) => void 
     }
   };
 
+  const handleRunAggregationNow = async () => {
+    const client = clients.find(c => c.store_id === selectedClient);
+    if (!client) return;
+
+    try {
+      const res = await fetch(`${API_BASE}/api/factory/aggregate/now`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Admin-Key': ADMIN_KEY
+        },
+        body: JSON.stringify({
+          store_id: selectedClient
+        })
+      });
+      if (!res.ok) {
+        const errText = await res.text();
+        throw new Error(errText || "Failed to trigger aggregation");
+      }
+      showToast(`Aggregation triggered for ${client.store_name}`, 'success');
+    } catch (err: any) {
+      showToast(err.message || "Failed to trigger aggregation", 'error');
+    }
+  };
+
   const handleMarkLive = async () => {
     try {
       const res = await fetch(`${API_BASE}/api/factory/config`, {
@@ -1640,10 +1832,139 @@ const ManagementTab = ({ onSelectStore }: { onSelectStore: (id: string) => void 
       if (!res.ok) throw new Error("Failed to onboard factory configuration");
       
       showToast("Factory configuration onboarded!", 'success');
-      setAddStep(3);
+      setNumCameras(1);
+      setCamerasList([{ camera_id: 'cam1', label: '', rtsp_url: '', fps: 2 }]);
+      setAddStep(2.5);
     } catch (err: any) {
       showToast(err.message || "Failed to onboard factory", 'error');
     }
+  };
+
+  const handleSaveCameras = async () => {
+    for (const cam of camerasList) {
+      if (!cam.label.trim()) {
+        showToast(`Label is required for ${cam.camera_id.toUpperCase()}`, 'error');
+        return;
+      }
+      if (!cam.rtsp_url.trim()) {
+        showToast(`RTSP URL is required for ${cam.camera_id.toUpperCase()}`, 'error');
+        return;
+      }
+    }
+
+    try {
+      const res = await fetch(`${API_BASE}/api/factory/cameras/update`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Admin-Key': ADMIN_KEY
+        },
+        body: JSON.stringify({
+          store_id: createdCredentials.store_id,
+          cameras: camerasList
+        })
+      });
+
+      if (!res.ok) throw new Error("Failed to save camera configuration");
+
+      showToast("Camera configuration saved successfully!", 'success');
+      setAddStep(3);
+    } catch (err: any) {
+      showToast(err.message || "Failed to save camera config", 'error');
+    }
+  };
+
+  const handleUpdateRegistryCameras = async () => {
+    for (const cam of camerasList) {
+      if (!cam.label.trim()) {
+        showToast(`Label is required for ${cam.camera_id.toUpperCase()}`, 'error');
+        return;
+      }
+      if (!cam.rtsp_url.trim()) {
+        showToast(`RTSP URL is required for ${cam.camera_id.toUpperCase()}`, 'error');
+        return;
+      }
+    }
+
+    try {
+      const res = await fetch(`${API_BASE}/api/factory/cameras/update`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Admin-Key': ADMIN_KEY
+        },
+        body: JSON.stringify({
+          store_id: selectedClientData.store_id,
+          cameras: camerasList
+        })
+      });
+
+      if (!res.ok) throw new Error("Failed to update camera configuration");
+
+      showToast("Registry camera configuration updated!", 'success');
+      setShowEditCamerasModal(false);
+      fetchClients();
+    } catch (err: any) {
+      showToast(err.message || "Failed to update camera config", 'error');
+    }
+  };
+
+  const openEditCamerasModal = () => {
+    const existing = selectedClientData?.factoryConfig?.cameras || [];
+    setNumCameras(existing.length || 1);
+    setCamerasList(existing.length > 0 ? existing : [{ camera_id: 'cam1', label: '', rtsp_url: '', fps: 2 }]);
+    setShowEditCamerasModal(true);
+  };
+
+  const CameraTestButton = ({ rtspUrl, storeId, cameraId }: { rtspUrl: string, storeId: string, cameraId: string }) => {
+    const [testing, setTesting] = useState(false);
+    const [tested, setTested] = useState(false);
+
+    const handleTest = async () => {
+      if (!rtspUrl) {
+        showToast("RTSP URL is required to test connection", 'error');
+        return;
+      }
+      setTesting(true);
+      try {
+        const res = await fetch(`${API_BASE}/api/factory/cameras/test`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-Admin-Key': ADMIN_KEY
+          },
+          body: JSON.stringify({ store_id: storeId, camera_id: cameraId, rtsp_url: rtspUrl })
+        });
+        await new Promise(r => setTimeout(r, 850));
+        if (res.ok) {
+          setTested(true);
+          showToast(`Camera ${cameraId} connected successfully!`, 'success');
+        } else {
+          showToast("Connection test failed", 'error');
+        }
+      } catch (err) {
+        showToast("Connection test error", 'error');
+      } finally {
+        setTesting(false);
+      }
+    };
+
+    return (
+      <button
+        type="button"
+        onClick={handleTest}
+        disabled={testing}
+        className={`px-3 py-1 rounded-lg text-[9px] font-mono font-bold uppercase transition-all cursor-pointer border ${
+          tested
+            ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400'
+            : testing
+              ? 'bg-auris-orange/10 border-auris-orange/30 text-auris-orange animate-pulse'
+              : 'bg-white/5 border-white/10 text-white/55 hover:text-white'
+        }`}
+      >
+        {testing ? "Testing..." : tested ? "Connected" : "Test Connection"}
+      </button>
+    );
   };
 
   const handleFloorplanUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -1998,6 +2319,16 @@ const ManagementTab = ({ onSelectStore }: { onSelectStore: (id: string) => void 
                             <LayoutDashboard className="w-3.5 h-3.5" /> View Overwatch Dashboard
                           </button>
 
+                          {/* Run Aggregation Now */}
+                          {selectedClientData?.plan === 'FACTORY' && (
+                            <button
+                              onClick={handleRunAggregationNow}
+                              className="w-full py-2.5 rounded-xl border border-auris-cyan/30 bg-auris-cyan/10 hover:bg-auris-cyan/20 text-auris-cyan text-[10px] font-mono uppercase font-bold tracking-wider transition-colors cursor-pointer flex items-center justify-center gap-2"
+                            >
+                              <Play className="w-3.5 h-3.5 animate-pulse" /> Run Aggregation Now
+                            </button>
+                          )}
+
                           {/* Suspend Toggle */}
                           <button
                             onClick={handleToggleSuspend}
@@ -2051,6 +2382,112 @@ const ManagementTab = ({ onSelectStore }: { onSelectStore: (id: string) => void 
                 {/* 2. SYSTEM SUB TAB */}
                 {clientTab === 'system' && (
                   <div className="space-y-6">
+                    {/* Edge Device Setup Section */}
+                    <GlassCard className="p-5 border border-white/5 bg-black/30 rounded-2xl space-y-4">
+                      <h3 className="text-xs font-display uppercase tracking-widest text-auris-cyan">
+                        Edge Device Setup
+                      </h3>
+                      
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        {/* API Key Box */}
+                        <div className="p-3.5 bg-black/25 border border-white/5 rounded-xl space-y-2">
+                          <span className="text-[8px] font-mono uppercase tracking-widest text-white/40 block">
+                            API Key
+                          </span>
+                          <div className="flex items-center gap-2">
+                            <div className="flex-1 bg-black/30 border border-white/10 rounded-xl px-3 py-2 text-xs font-mono select-text truncate">
+                              {revealKey 
+                                ? (detailedStore?.api_key || selectedClientData?.api_key || 'sk_dev_api_key_not_fetched') 
+                                : '••••••••••••••••••••••••••••••••••••••••'}
+                            </div>
+                            <button
+                              onClick={() => setRevealKey(!revealKey)}
+                              className="p-2 border border-white/10 bg-white/5 hover:bg-white/10 rounded-xl text-white/60 hover:text-white transition-all cursor-pointer"
+                              title={revealKey ? "Hide API Key" : "Reveal API Key"}
+                            >
+                              {revealKey ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+                            </button>
+                            <button
+                              onClick={() => handleCopy(detailedStore?.api_key || selectedClientData?.api_key || '', 'API Key')}
+                              className="p-2 border border-white/10 bg-white/5 hover:bg-white/10 rounded-xl text-white/60 hover:text-white transition-all cursor-pointer"
+                              title="Copy API Key"
+                            >
+                              <Copy className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                        </div>
+
+                        {/* Store ID Box */}
+                        <div className="p-3.5 bg-black/25 border border-white/5 rounded-xl space-y-2">
+                          <span className="text-[8px] font-mono uppercase tracking-widest text-white/40 block">
+                            Store ID
+                          </span>
+                          <div className="flex items-center gap-2">
+                            <div className="flex-1 bg-black/30 border border-white/10 rounded-xl px-3 py-2 text-xs font-mono select-text truncate">
+                              {selectedClientData?.store_id || ''}
+                            </div>
+                            <button
+                              onClick={() => handleCopy(selectedClientData?.store_id || '', 'Store ID')}
+                              className="p-2 border border-white/10 bg-white/5 hover:bg-white/10 rounded-xl text-white/60 hover:text-white transition-all cursor-pointer"
+                              title="Copy Store ID"
+                            >
+                              <Copy className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Instructions & Status */}
+                      <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 pt-2">
+                        <div className="space-y-1.5">
+                          <span className="text-[9px] font-mono uppercase tracking-widest text-white/50 block font-bold">
+                            Instructions
+                          </span>
+                          <ol className="text-[10px] text-white/65 space-y-1 list-decimal list-inside font-sans">
+                            <li>Connect N100 to factory WiFi</li>
+                            <li>Run: <code className="font-mono text-auris-cyan bg-white/5 px-1 py-0.5 rounded">python3 provision.py</code></li>
+                            <li>Enter the API key above when prompted</li>
+                          </ol>
+                        </div>
+
+                        {/* Status Indicator */}
+                        <div className="flex flex-col items-end">
+                          <span className="text-[8px] font-mono uppercase tracking-widest text-white/35 block mb-1">
+                            Connection Status
+                          </span>
+                          {(() => {
+                            const lastBlob = selectedClientData?.last_blob;
+                            if (!lastBlob) {
+                              return (
+                                <div className="flex items-center gap-2 text-[10px] font-mono text-white/45 bg-white/5 border border-white/10 px-3 py-1.5 rounded-xl">
+                                  <span className="w-2 h-2 rounded-full bg-white/20" />
+                                  <span>○ Not yet connected</span>
+                                </div>
+                              );
+                            }
+                            const diffMs = Date.now() - new Date(lastBlob).getTime();
+                            const diffMins = Math.floor(diffMs / 60000);
+                            if (diffMins < 10) {
+                              const lastSeenStr = diffMins < 1 ? "just now" : `${diffMins} min ago`;
+                              return (
+                                <div className="flex items-center gap-2 text-[10px] font-mono text-emerald-400 bg-emerald-500/5 border border-emerald-500/25 px-3 py-1.5 rounded-xl shadow-[0_0_10px_rgba(16,185,129,0.05)]">
+                                  <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse shadow-[0_0_8px_rgba(16,185,129,0.5)]" />
+                                  <span>● Edge Online — last seen {lastSeenStr}</span>
+                                </div>
+                              );
+                            } else {
+                              return (
+                                <div className="flex items-center gap-2 text-[10px] font-mono text-red-400 bg-red-500/5 border border-red-500/25 px-3 py-1.5 rounded-xl">
+                                  <span className="w-2 h-2 rounded-full bg-red-500" />
+                                  <span>○ Edge Offline</span>
+                                </div>
+                              );
+                            }
+                          })()}
+                        </div>
+                      </div>
+                    </GlassCard>
+
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                       
                       {/* Left side: Edge device & API Keys */}
@@ -2111,6 +2548,42 @@ const ManagementTab = ({ onSelectStore }: { onSelectStore: (id: string) => void 
                             Use this key to authenticate edge streams calling `POST /api/blobs` and local camera heartbeat sensors. Keep it secure.
                           </p>
                         </div>
+
+                        {/* Factory Cameras Registry (Factory Plan Only) */}
+                        {selectedClientData?.plan === 'FACTORY' && (
+                          <div className="p-4 border border-white/5 bg-black/10 rounded-2xl space-y-4">
+                            <div className="flex justify-between items-center border-b border-white/5 pb-2">
+                              <span className="text-[8px] font-mono uppercase tracking-widest text-white/40 block font-bold">
+                                FACTORY CAMERAS REGISTRY
+                              </span>
+                              <button
+                                onClick={openEditCamerasModal}
+                                className="px-2.5 py-1 border border-auris-cyan/35 bg-auris-cyan/10 text-auris-cyan hover:bg-auris-cyan/20 rounded-lg text-[9px] font-mono uppercase font-bold tracking-wider transition-all cursor-pointer"
+                              >
+                                Edit Cameras
+                              </button>
+                            </div>
+
+                            <div className="space-y-2 max-h-[220px] overflow-y-auto pr-1 custom-scrollbar">
+                              {!(selectedClientData?.factoryConfig?.cameras?.length) ? (
+                                <p className="text-[9px] font-mono text-white/35 italic">No cameras configured yet.</p>
+                              ) : (
+                                selectedClientData.factoryConfig.cameras.map((cam: any) => (
+                                  <div key={cam.camera_id} className="flex justify-between items-center text-[10px] font-mono p-2.5 bg-black/20 border border-white/5 rounded-xl hover:border-auris-cyan/20 transition-all">
+                                    <div className="flex flex-col gap-0.5">
+                                      <span className="text-white/90 font-bold uppercase">{cam.camera_id}</span>
+                                      <span className="text-[8px] text-white/40">{cam.label}</span>
+                                    </div>
+                                    <div className="text-right flex flex-col items-end gap-0.5 max-w-[65%]">
+                                      <span className="text-auris-cyan text-[9px] font-mono truncate w-full" title={cam.rtsp_url}>{cam.rtsp_url}</span>
+                                      <span className="text-[8px] text-white/45">fps: {cam.fps || 2}</span>
+                                    </div>
+                                  </div>
+                                ))
+                              )}
+                            </div>
+                          </div>
+                        )}
                       </div>
 
                       {/* Right side: Shifts Configuration (Factory Only) */}
@@ -2410,14 +2883,15 @@ const ManagementTab = ({ onSelectStore }: { onSelectStore: (id: string) => void 
                 </div>
                 
                 {/* Steps pills */}
-                <div className="flex items-center gap-1 font-mono text-[9px]">
-                  {[1, 2, 3, 4].map((step) => {
+                <div className="flex items-center gap-1.5 font-mono text-[9px]">
+                  {(addForm.plan === 'FACTORY' ? [1, 2, 2.5, 3, 4] : [1, 4]).map((step) => {
                     const isPassed = addStep > step;
                     const isActive = addStep === step;
+                    const label = step === 2.5 ? '2.5' : step.toString();
                     return (
                       <div
                         key={step}
-                        className={`w-5 h-5 rounded-full flex items-center justify-center font-bold transition-all ${
+                        className={`min-w-5 h-5 px-1.5 rounded-full flex items-center justify-center font-bold transition-all ${
                           isPassed 
                             ? 'bg-emerald-500 text-black' 
                             : isActive 
@@ -2425,7 +2899,7 @@ const ManagementTab = ({ onSelectStore }: { onSelectStore: (id: string) => void 
                               : 'bg-white/5 border border-white/10 text-white/30'
                         }`}
                       >
-                        {isPassed ? '✓' : step}
+                        {isPassed ? '✓' : label}
                       </div>
                     );
                   })}
@@ -2673,6 +3147,104 @@ const ManagementTab = ({ onSelectStore }: { onSelectStore: (id: string) => void 
                 </form>
               )}
 
+              {/* STEP 2.5 FORM: Camera Setup (Only Factory Plan) */}
+              {addStep === 2.5 && (
+                <div className="space-y-4">
+                  <h4 className="text-[10px] font-mono text-auris-cyan uppercase tracking-widest mb-1">
+                    STEP 2.5: CONFIGURE CAMERAS
+                  </h4>
+                  <p className="text-[9px] font-mono text-white/35">
+                    Enter the RTSP URL for each camera on the factory network.
+                  </p>
+
+                  <div className="flex flex-col gap-1.5 mb-4">
+                    <label className="text-[8px] font-mono uppercase tracking-widest text-white/40">NUMBER OF CAMERAS</label>
+                    <div className="flex gap-1.5 flex-wrap">
+                      {[1, 2, 3, 4, 5, 6, 7, 8].map(n => (
+                        <button
+                          key={n}
+                          type="button"
+                          onClick={() => handleNumCamerasChange(n)}
+                          className={`px-3 py-1.5 rounded-xl font-mono text-xs cursor-pointer border transition-all ${
+                            numCameras === n
+                              ? 'bg-auris-cyan border-auris-cyan text-black font-bold shadow-md shadow-auris-cyan/15'
+                              : 'bg-white/5 border-white/10 text-white/60 hover:text-white'
+                          }`}
+                        >
+                          {n}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div className="space-y-3.5 max-h-[300px] overflow-y-auto pr-1 custom-scrollbar">
+                    {camerasList.map((cam, idx) => (
+                      <div key={cam.camera_id} className="p-4 border border-white/5 bg-black/25 rounded-2xl space-y-3 animate-in fade-in duration-300">
+                        <div className="flex justify-between items-center text-[10px] font-mono border-b border-white/5 pb-1">
+                          <span className="text-auris-cyan font-bold uppercase">{cam.camera_id.toUpperCase()}</span>
+                          <span className="text-white/35">FPS: 2 (default)</span>
+                        </div>
+
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                          <div className="flex flex-col gap-1">
+                            <span className="text-[7px] font-mono text-white/45 uppercase">LABEL</span>
+                            <input
+                              type="text"
+                              required
+                              value={cam.label}
+                              onChange={e => {
+                                const copy = [...camerasList];
+                                copy[idx].label = e.target.value;
+                                setCamerasList(copy);
+                              }}
+                              placeholder="e.g. Entry Camera"
+                              className="bg-black border border-white/10 rounded-xl py-2 px-3 text-xs text-white placeholder-white/20 focus:outline-none focus:border-auris-cyan/40 transition-colors"
+                            />
+                          </div>
+
+                          <div className="flex flex-col gap-1">
+                            <span className="text-[7px] font-mono text-white/45 uppercase">RTSP URL</span>
+                            <input
+                              type="text"
+                              required
+                              value={cam.rtsp_url}
+                              onChange={e => {
+                                const copy = [...camerasList];
+                                copy[idx].rtsp_url = e.target.value;
+                                setCamerasList(copy);
+                              }}
+                              placeholder="rtsp://admin:password@192.168.1.x:554/stream1"
+                              className="bg-black border border-white/10 rounded-xl py-2 px-3 text-xs font-mono text-white placeholder-white/20 focus:outline-none focus:border-auris-cyan/40 transition-colors"
+                            />
+                          </div>
+                        </div>
+
+                        <div className="flex justify-end pt-1">
+                          <CameraTestButton rtspUrl={cam.rtsp_url} storeId={createdCredentials?.store_id} cameraId={cam.camera_id} />
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+
+                  <div className="flex justify-end gap-3 pt-5 border-t border-white/5 mt-5">
+                    <button
+                      type="button"
+                      onClick={() => setAddStep(3)}
+                      className="px-4 py-2 border border-white/10 hover:border-white/20 bg-white/5 rounded-xl text-white/60 hover:text-white text-[10px] font-mono uppercase font-bold tracking-wider cursor-pointer"
+                    >
+                      Configure cameras later in Registry
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleSaveCameras}
+                      className="px-5 py-2 border border-auris-cyan/35 bg-auris-cyan/10 hover:bg-auris-cyan/20 text-auris-cyan rounded-xl text-[10px] font-mono uppercase font-bold tracking-wider cursor-pointer"
+                    >
+                      Save & Continue
+                    </button>
+                  </div>
+                </div>
+              )}
+
               {/* STEP 3: Floor plan upload */}
               {addStep === 3 && (
                 <div className="space-y-5 text-center py-6">
@@ -2788,6 +3360,133 @@ const ManagementTab = ({ onSelectStore }: { onSelectStore: (id: string) => void 
                 </div>
               )}
 
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* EDIT CAMERAS MODAL */}
+      <AnimatePresence>
+        {showEditCamerasModal && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+            <motion.div 
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setShowEditCamerasModal(false)}
+              className="absolute inset-0 bg-black/85 backdrop-blur-md"
+            />
+            
+            <motion.div
+              initial={{ opacity: 0, scale: 0.9, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.9, y: 10 }}
+              className="relative w-full max-w-lg border border-auris-border bg-auris-card rounded-2xl overflow-hidden shadow-2xl p-6 z-10"
+            >
+              <div className="scanline" />
+              
+              <div className="flex items-center justify-between border-b border-white/5 pb-4 mb-5">
+                <div>
+                  <h3 className="text-xs font-display uppercase tracking-widest text-white/90">Edit Cameras Registry</h3>
+                  <span className="text-[9px] font-mono text-white/35 block mt-0.5">
+                    Update RTSP URLs and camera mappings for {selectedClientData?.store_name}
+                  </span>
+                </div>
+                <button 
+                  onClick={() => setShowEditCamerasModal(false)}
+                  className="p-1 border border-white/10 hover:border-white/20 rounded-lg text-white/40 hover:text-white cursor-pointer"
+                >
+                  <XCircle className="w-4 h-4" />
+                </button>
+              </div>
+
+              <div className="space-y-4">
+                <div className="flex flex-col gap-1.5">
+                  <label className="text-[8px] font-mono uppercase tracking-widest text-white/40">NUMBER OF CAMERAS</label>
+                  <div className="flex gap-1.5 flex-wrap">
+                    {[1, 2, 3, 4, 5, 6, 7, 8].map(n => (
+                      <button
+                        key={n}
+                        type="button"
+                        onClick={() => handleNumCamerasChange(n)}
+                        className={`px-3 py-1.5 rounded-xl font-mono text-xs cursor-pointer border transition-all ${
+                          numCameras === n
+                            ? 'bg-auris-cyan border-auris-cyan text-black font-bold shadow-md shadow-auris-cyan/15'
+                            : 'bg-white/5 border-white/10 text-white/60 hover:text-white'
+                        }`}
+                      >
+                        {n}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="space-y-3.5 max-h-[300px] overflow-y-auto pr-1 custom-scrollbar">
+                  {camerasList.map((cam, idx) => (
+                    <div key={cam.camera_id} className="p-4 border border-white/5 bg-black/25 rounded-2xl space-y-3 animate-in fade-in duration-300">
+                      <div className="flex justify-between items-center text-[10px] font-mono border-b border-white/5 pb-1">
+                        <span className="text-auris-cyan font-bold uppercase">{cam.camera_id.toUpperCase()}</span>
+                        <span className="text-white/35">FPS: 2 (default)</span>
+                      </div>
+
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                        <div className="flex flex-col gap-1">
+                          <span className="text-[7px] font-mono text-white/45 uppercase">LABEL</span>
+                          <input
+                            type="text"
+                            required
+                            value={cam.label}
+                            onChange={e => {
+                              const copy = [...camerasList];
+                              copy[idx].label = e.target.value;
+                              setCamerasList(copy);
+                            }}
+                            placeholder="e.g. Entry Camera"
+                            className="bg-black border border-white/10 rounded-xl py-2 px-3 text-xs text-white placeholder-white/20 focus:outline-none focus:border-auris-cyan/40"
+                          />
+                        </div>
+
+                        <div className="flex flex-col gap-1">
+                          <span className="text-[7px] font-mono text-white/45 uppercase">RTSP URL</span>
+                          <input
+                            type="text"
+                            required
+                            value={cam.rtsp_url}
+                            onChange={e => {
+                              const copy = [...camerasList];
+                              copy[idx].rtsp_url = e.target.value;
+                              setCamerasList(copy);
+                            }}
+                            placeholder="rtsp://..."
+                            className="bg-black border border-white/10 rounded-xl py-2 px-3 text-xs font-mono text-white placeholder-white/20 focus:outline-none focus:border-auris-cyan/40"
+                          />
+                        </div>
+                      </div>
+
+                      <div className="flex justify-end pt-1">
+                        <CameraTestButton rtspUrl={cam.rtsp_url} storeId={selectedClientData?.store_id || ''} cameraId={cam.camera_id} />
+                      </div>
+                    </div>
+                  ))}
+                </div>
+
+                <div className="flex justify-end gap-3 pt-5 border-t border-white/5 mt-5">
+                  <button
+                    type="button"
+                    onClick={() => setShowEditCamerasModal(false)}
+                    className="px-4 py-2 border border-white/10 hover:border-white/20 bg-white/5 rounded-xl text-white/60 hover:text-white text-[10px] font-mono uppercase font-bold tracking-wider cursor-pointer"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleUpdateRegistryCameras}
+                    className="px-5 py-2 border border-auris-cyan/35 bg-auris-cyan/10 hover:bg-auris-cyan/20 text-auris-cyan rounded-xl text-[10px] font-mono uppercase font-bold tracking-wider cursor-pointer"
+                  >
+                    Save Changes
+                  </button>
+                </div>
+              </div>
             </motion.div>
           </div>
         )}
@@ -2912,6 +3611,7 @@ export default function App() {
   const [password, setPassword] = useState<string>('');
   const [storeName, setStoreName] = useState<string>('');
   const [factoryConfigs, setFactoryConfigs] = useState<any[]>([]);
+  const [selectedRegistryClient, setSelectedRegistryClient] = useState<string | null>(null);
 
   useEffect(() => {
     if (storeId) {
@@ -2980,7 +3680,15 @@ export default function App() {
             transition={{ duration: 0.4, ease: [0.16, 1, 0.3, 1] }}
             className="h-full"
           >
-            {activeTab === 'mission' && <MissionControlTab onSelectStore={handleSelectStore} />}
+            {activeTab === 'mission' && (
+              <MissionControlTab 
+                onSelectStore={handleSelectStore} 
+                onSelectRegistryClient={(id) => {
+                  setSelectedRegistryClient(id);
+                  setActiveTab('management');
+                }} 
+              />
+            )}
             {activeTab === 'dashboard' && <DashboardTab storeId={storeId} password={password} />}
             {activeTab === 'mapping' && <MappingTab />}
             {activeTab === 'calibration' && <CalibrationTab storeId={storeId} password={password} />}
@@ -3013,7 +3721,13 @@ export default function App() {
                 </div>
               )
             )}
-            {activeTab === 'management' && <ManagementTab onSelectStore={handleSelectStore} />}
+            {activeTab === 'management' && (
+              <ManagementTab 
+                onSelectStore={handleSelectStore} 
+                initialSelectedClient={selectedRegistryClient} 
+                clearInitialClient={() => setSelectedRegistryClient(null)} 
+              />
+            )}
           </motion.div>
         </AnimatePresence>
       </main>
