@@ -3,18 +3,44 @@ import {
   View, Text, StyleSheet, ScrollView, Dimensions, ActivityIndicator, RefreshControl
 } from "react-native";
 import { SvgXml, Svg, Circle } from "react-native-svg";
-import { fetchMapSvg, fetchSpatialLive } from "../services/api";
+import { fetchMapSvg, fetchSpatialLive, fetchFactoryZones, fetchFactoryCameras } from "../services/api";
 
 const { width } = Dimensions.get("window");
 const MAP_SIZE = width - 32;
 
-export default function FactoryMapScreen({ store }) {
+export default function FactoryMapScreen({ store, setCameraCount }) {
   const [svgString, setSvgString] = useState(null);
   const [positions, setPositions] = useState([]);
   const [bounds, setBounds] = useState({ width: 50, height: 50 });
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState(null);
+  const [zones, setZones] = useState([]);
+  const [zonesLoaded, setZonesLoaded] = useState(false);
+  const [camerasData, setCamerasData] = useState({ cameras: [], total_online: 0 });
+
+  const loadZones = useCallback(async () => {
+    try {
+      const data = await fetchFactoryZones(store.store_id, store.password);
+      setZones(data.zones || []);
+      setZonesLoaded(true);
+    } catch (e) {
+      console.log("Failed to load factory zones:", e.message);
+      setZonesLoaded(true);
+    }
+  }, [store]);
+
+  const loadCameras = useCallback(async () => {
+    try {
+      const data = await fetchFactoryCameras(store.store_id, store.password);
+      setCamerasData(data);
+      if (setCameraCount) {
+        setCameraCount(data.total_online);
+      }
+    } catch (e) {
+      console.log("Failed to load factory cameras status:", e.message);
+    }
+  }, [store, setCameraCount]);
 
   const loadMapData = useCallback(async () => {
     try {
@@ -46,20 +72,27 @@ export default function FactoryMapScreen({ store }) {
   }, [store]);
 
   useEffect(() => {
+    loadZones();
+    loadCameras();
     loadMapData();
     loadLivePositions();
-    const interval = setInterval(loadLivePositions, 5000);
+    const interval = setInterval(() => {
+      loadLivePositions();
+      loadCameras();
+    }, 5000);
     return () => clearInterval(interval);
-  }, [loadMapData, loadLivePositions]);
+  }, [loadZones, loadCameras, loadMapData, loadLivePositions]);
 
   const onRefresh = () => {
     setRefreshing(true);
+    loadZones();
+    loadCameras();
     loadMapData();
     loadLivePositions();
   };
 
-  // Check if camera offline
-  const isCameraOffline = error || positions.length === 0;
+  // Check if cameras are offline (based on total_online count from cameras status API)
+  const isCameraOffline = error || (camerasData && camerasData.total_online === 0);
 
   // Check if system is in learning phase (created_at < 3 days)
   const daysSinceCreation = store.created_at
@@ -67,21 +100,12 @@ export default function FactoryMapScreen({ store }) {
     : 0;
   const isLearningPhase = daysSinceCreation < 3;
 
-  // Determine active zones from config or fallback
-  const zones = store.zone_config && Object.keys(store.zone_config).length > 0
-    ? Object.keys(store.zone_config).map(name => {
-        const bbox = store.zone_config[name];
-        return { name, bbox };
-      })
-    : [
-        { name: "Assembly Line A", bbox: [0.1, 0.1, 0.4, 0.4] },
-        { name: "Packaging Zone", bbox: [0.5, 0.1, 0.8, 0.5] },
-        { name: "Inspection Station", bbox: [0.2, 0.6, 0.5, 0.9] },
-        { name: "Raw Storage", bbox: [0.6, 0.6, 0.9, 0.9] }
-      ];
-
   const getZoneMetrics = (zone) => {
-    const [x1, y1, x2, y2] = zone.bbox;
+    const bbox = zone.bbox;
+    if (!bbox || bbox.length < 4) {
+      return { count: 0, status: "Empty", statusColor: "#DC2626" };
+    }
+    const [x1, y1, x2, y2] = bbox;
     const count = positions.filter(p => {
       const px = p.x_m / bounds.width;
       const py = p.y_m / bounds.height;
@@ -90,10 +114,11 @@ export default function FactoryMapScreen({ store }) {
 
     let status = "Empty";
     let statusColor = "#DC2626"; // red
-    if (count >= 2) {
+    const expected = parseInt(zone.expected_headcount || 1, 10);
+    if (count >= expected) {
       status = "Full";
       statusColor = "#16A34A"; // green
-    } else if (count === 1) {
+    } else if (count > 0) {
       status = "Low";
       statusColor = "#CA8A04"; // amber
     }
@@ -162,20 +187,29 @@ export default function FactoryMapScreen({ store }) {
       {/* Zone Summary list */}
       <View style={styles.listCard}>
         <Text style={styles.listTitle}>Workstation Headcounts</Text>
-        {zones.map((z, idx) => {
-          const { count, status, statusColor } = getZoneMetrics(z);
-          return (
-            <View key={idx} style={styles.listItem}>
-              <View style={styles.listLeft}>
-                <Text style={styles.zoneName}>{z.name}</Text>
-                <Text style={styles.headcountSub}>{count} active worker{count !== 1 ? 's' : ''}</Text>
+        {zones.length === 0 && zonesLoaded ? (
+          <Text style={styles.noZonesText}>No zones configured yet. Label zones in HQ portal → hq.skymlabs.com</Text>
+        ) : (
+          zones.map((z, idx) => {
+            const { count, status, statusColor } = getZoneMetrics(z);
+            return (
+              <View key={idx} style={styles.listItem}>
+                <View style={styles.listLeft}>
+                  <Text style={styles.zoneName}>{z.zone_label || z.label || z.zone_id}</Text>
+                  <Text style={styles.headcountSub}>
+                    Type: {z.zone_type || "N/A"} • Expected: {z.expected_headcount || 0}
+                  </Text>
+                  <Text style={styles.headcountSub}>
+                    {count} active worker{count !== 1 ? 's' : ''}
+                  </Text>
+                </View>
+                <View style={[styles.statusTag, { backgroundColor: statusColor + "15" }]}>
+                  <Text style={[styles.statusText, { color: statusColor }]}>{status.toUpperCase()}</Text>
+                </View>
               </View>
-              <View style={[styles.statusTag, { backgroundColor: statusColor + "15" }]}>
-                <Text style={[styles.statusText, { color: statusColor }]}>{status.toUpperCase()}</Text>
-              </View>
-            </View>
-          );
-        })}
+            );
+          })
+        )}
       </View>
     </ScrollView>
   );
@@ -255,4 +289,11 @@ const styles = StyleSheet.create({
   headcountSub: { fontSize: 13, color: "#6B7280", marginTop: 2 },
   statusTag: { paddingHorizontal: 12, paddingVertical: 6, borderRadius: 20 },
   statusText: { fontSize: 11, fontWeight: "700" },
+  noZonesText: {
+    color: "#6B7280",
+    fontSize: 14,
+    textAlign: "center",
+    marginVertical: 20,
+    fontStyle: "italic",
+  },
 });

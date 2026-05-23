@@ -9,7 +9,7 @@ export default function LoginScreen({ onLogin, onAdmin }) {
 
   const handleLogin = async () => {
     if (!storeId.trim() || !password.trim()) {
-      Alert.alert("Error", "Please enter Factory ID and password");
+      Alert.alert("Error", "Please enter Store ID and password");
       return;
     }
     setLoading(true);
@@ -17,7 +17,7 @@ export default function LoginScreen({ onLogin, onAdmin }) {
       const data = await login(storeId.trim(), password.trim());
       onLogin(data, password.trim());
     } catch (e) {
-      Alert.alert("Login Failed", "Invalid Factory ID or password");
+      Alert.alert("Login Failed", "Invalid Store ID or password");
     } finally {
       setLoading(false);
     }
@@ -33,13 +33,13 @@ export default function LoginScreen({ onLogin, onAdmin }) {
           activeOpacity={0.9}
         >
           <Text style={styles.logoText}>Auris</Text>
-          <Text style={styles.logoSub}>Factory Command</Text>
+          <Text style={styles.logoSub}>Client Portal</Text>
         </TouchableOpacity>
         <View style={styles.form}>
-          <Text style={styles.label}>FACTORY ID</Text>
+          <Text style={styles.label}>STORE ID</Text>
           <TextInput 
             style={styles.input} 
-            placeholder="e.g. sharma_karolbagh" 
+            placeholder="Enter your Store ID" 
             placeholderTextColor="#86868B" 
             value={storeId} 
             onChangeText={setStoreId} 
@@ -56,7 +56,7 @@ export default function LoginScreen({ onLogin, onAdmin }) {
             secureTextEntry 
           />
           <TouchableOpacity style={[styles.btn, loading && styles.btnDisabled]} onPress={handleLogin} disabled={loading}>
-            {loading ? <ActivityIndicator color="#fff" /> : <Text style={styles.btnText}>Authenticate</Text>}
+            {loading ? <ActivityIndicator color="#fff" /> : <Text style={styles.btnText}>Sign In</Text>}
           </TouchableOpacity>
           <Text style={styles.footer}>Powered by Skym Labs</Text>
         </View>

@@ -56,7 +56,7 @@ import { useDropzone } from 'react-dropzone';
 // --- CONFIGURATION ---
 const IS_DEV = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
 const API_BASE = IS_DEV ? 'http://localhost:8000' : 'https://auris.skymlabs.com';
-const ADMIN_KEY = 'dcd62cb40e5fa0870d73c79fbd521d05';
+let sessionAdminToken = '';
 
 // --- TYPES ---
 type Tab = 'mission' | 'dashboard' | 'mapping' | 'calibration' | 'report' | 'training' | 'management' | 'factory' | 'factory_analytics';
@@ -127,7 +127,7 @@ const GlobalHealthDashboard = ({
   const fetchTelemetry = async () => {
     try {
       const storesRes = await fetch(`${API_BASE}/admin/stores`, {
-        headers: { 'X-Admin-Key': ADMIN_KEY }
+        headers: { 'X-Admin-Token': sessionAdminToken }
       });
       if (!storesRes.ok) throw new Error("Failed to load stores");
       const storesData = await storesRes.json();
@@ -135,7 +135,7 @@ const GlobalHealthDashboard = ({
       let configsData = { configs: [] };
       try {
         const configsRes = await fetch(`${API_BASE}/api/factory/configs`, {
-          headers: { 'X-Admin-Key': ADMIN_KEY }
+          headers: { 'X-Admin-Token': sessionAdminToken }
         });
         if (configsRes.ok) {
           configsData = await configsRes.json();
@@ -227,7 +227,7 @@ const GlobalHealthDashboard = ({
     <div className="h-full flex flex-col p-4 md:p-8 overflow-y-auto custom-scrollbar bg-auris-bg">
       <header className="flex flex-col md:flex-row justify-between items-start md:items-end mb-8 md:mb-12 gap-6 md:gap-4 border-b border-white/5 pb-6">
         <div>
-          <h2 className="text-[10px] uppercase tracking-[0.4em] font-mono text-auris-cyan">AURIS GLOBAL OVERWATCH</h2>
+          <h2 className="text-[10px] uppercase tracking-[0.4em] font-mono text-auris-cyan">AURIS GLOBAL SYSTEM</h2>
           <h1 className="text-4xl font-display font-light mt-2 tracking-tight uppercase">Mission Control</h1>
         </div>
         <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-black/40 border border-white/5 font-mono text-[9px] text-white/50 tracking-wider">
@@ -267,7 +267,7 @@ const GlobalHealthDashboard = ({
       {loading ? (
         <div className="flex-1 flex items-center justify-center font-mono text-xs text-white/40">
           <RefreshCw className="w-6 h-6 animate-spin mr-3 text-auris-cyan" />
-          Synchronizing Overwatch Telemetry...
+          Loading...
         </div>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4 gap-6">
@@ -379,6 +379,27 @@ const DashboardTab = ({ storeId, password }: { storeId: string; password?: strin
   const [viewMode, setViewMode] = useState<'live' | 'thermal'>('live');
   const [activeFloor, setActiveFloor] = useState('floor_0');
   const [svgMap, setSvgMap] = useState<string>('');
+  const [alerts, setAlerts] = useState<any[]>([]);
+
+  // Fetch Recent Alerts
+  useEffect(() => {
+    const fetchRecentAlerts = async () => {
+      try {
+        const res = await fetch(`${API_BASE}/api/whatsapp/logs?store_id=${storeId}`, {
+          headers: { 'X-Admin-Token': sessionAdminToken }
+        });
+        if (res.ok) {
+          const data = await res.json();
+          setAlerts(data.logs || []);
+        }
+      } catch (e) {
+        console.error("Failed to fetch alerts in DashboardTab:", e);
+      }
+    };
+    if (storeId) {
+      fetchRecentAlerts();
+    }
+  }, [storeId]);
 
   // Fetch Live Positions
   useEffect(() => {
@@ -400,15 +421,10 @@ const DashboardTab = ({ storeId, password }: { storeId: string; password?: strin
             last_seen: 'now'
           })));
         } else {
-          throw new Error("Empty telemetry");
+          setTracks([]);
         }
       } catch (e) {
-        // Fallback for visual dashboard demonstration
-        setTracks([
-          { track_id: '1024', x_meters: 10 + Math.random(), y_meters: 8 + Math.random(), floor: 'floor_0', camera_id: 'C01', last_seen: 'now' },
-          { track_id: '0982', x_meters: 25 + Math.random(), y_meters: 12 + Math.random(), floor: 'floor_0', camera_id: 'C02', last_seen: 'now' },
-          { track_id: '1105', x_meters: 18 + Math.random(), y_meters: 22 + Math.random(), floor: 'floor_0', camera_id: 'C03', last_seen: 'now', warning: true },
-        ]);
+        setTracks([]);
       }
     };
     fetchPositions();
@@ -438,35 +454,39 @@ const DashboardTab = ({ storeId, password }: { storeId: string; password?: strin
   }, [activeFloor, storeId, password]);
 
   return (
-    <div className="flex h-full animate-in fade-in duration-700">
-      {/* Left: Telemetry */}
+    <div className="flex h-full animate-in fade-in duration-700 w-full">
+      {/* Left: Live Feed */}
       <aside className="w-80 border-r border-white/5 flex flex-col bg-black/20 backdrop-blur-md">
         <div className="p-6 border-b border-white/5">
           <h2 className="text-[10px] uppercase tracking-[0.2em] font-mono text-auris-cyan mb-6 flex items-center gap-2">
-            <Activity className="w-3 h-3" /> System Telemetry
+            <Activity className="w-3 h-3" /> Live Feed
           </h2>
           <div className="grid grid-cols-2 gap-3">
              <div className="p-3 glass rounded-lg bg-auris-cyan/5 border-auris-cyan/20">
-                <div className="text-[10px] text-white/40 uppercase mb-1">Live Tracks</div>
+                <div className="text-[10px] text-white/40 uppercase mb-1">People detected</div>
                 <div className="text-xl font-display text-auris-cyan">{tracks.length}</div>
              </div>
              <div className="p-3 glass rounded-lg bg-auris-purple/5 border-auris-purple/20">
                 <div className="text-[10px] text-white/40 uppercase mb-1">Status</div>
-                <div className="text-xs font-mono text-auris-purple">NOMINAL</div>
+                <div className="text-xs font-mono text-auris-purple">Online</div>
              </div>
           </div>
         </div>
         
         <div className="flex-1 overflow-y-auto p-4 space-y-3 custom-scrollbar">
-          {tracks.map(t => (
-            <div key={t.track_id} className={`p-3 glass rounded-lg border-white/5 hover:border-auris-cyan/30 transition-colors ${t.warning ? 'bg-auris-orange/5 border-auris-orange/20' : ''}`}>
-              <div className="flex justify-between text-[10px] font-mono mb-1">
-                <span className={t.warning ? 'text-auris-orange' : 'text-auris-cyan'}>TRACK #{t.track_id}</span>
-                <span className="opacity-30">{t.last_seen}</span>
+          {tracks.length === 0 ? (
+            <div className="p-4 text-center text-[10px] font-mono text-white/35">No live data</div>
+          ) : (
+            tracks.map(t => (
+              <div key={t.track_id} className={`p-3 glass rounded-lg border-white/5 hover:border-auris-cyan/30 transition-colors ${t.warning ? 'bg-auris-orange/5 border-auris-orange/20' : ''}`}>
+                <div className="flex justify-between text-[10px] font-mono mb-1">
+                  <span className={t.warning ? 'text-auris-orange' : 'text-auris-cyan'}>TRACK #{t.track_id}</span>
+                  <span className="opacity-30">{t.last_seen}</span>
+                </div>
+                <div className="text-[11px] text-white/70">Position: {t.x_meters.toFixed(2)}m, {t.y_meters.toFixed(2)}m</div>
               </div>
-              <div className="text-[11px] text-white/70">Position: {t.x_meters.toFixed(2)}m, {t.y_meters.toFixed(2)}m</div>
-            </div>
-          ))}
+            ))
+          )}
         </div>
       </aside>
 
@@ -564,144 +584,169 @@ const DashboardTab = ({ storeId, password }: { storeId: string; password?: strin
       {/* Right: Metrics */}
       <aside className="w-80 border-l border-white/5 p-6 flex flex-col gap-6 bg-black/20 backdrop-blur-md">
          <h2 className="text-[10px] uppercase tracking-[0.2em] font-mono text-white/40 flex items-center gap-2">
-            <ShieldCheck className="w-3 h-3 text-auris-cyan" /> Perspective Analysis
+            <ShieldCheck className="w-3 h-3 text-auris-cyan" /> Summary
          </h2>
          <MetricCard label="Current Occupancy" value={tracks.length} unit="PERSONS" trend="+12%" cyan />
          <MetricCard label="Avg Dwell Time" value="14.5" unit="MINUTES" trend="-2%" />
-         <MetricCard label="Security Confidence" value="98.2" unit="PERCENT" />
          
-         <div className="mt-auto glass p-4 rounded-xl border-orange-500/20 bg-orange-500/5">
-            <h3 className="text-[10px] text-orange-500 font-bold uppercase flex items-center gap-2 mb-2">
-              <AlertTriangle className="w-3 h-3" /> Recent Alerts
-            </h3>
-            <div className="space-y-2">
-              <div className="text-[11px] text-white/60">14:22 - Camera offline in Sector G</div>
-              <div className="text-[11px] text-white/60">12:10 - Anomalous dwell in Lobby</div>
-            </div>
-         </div>
+         {alerts.length > 0 && (
+           <div className="mt-auto glass p-4 rounded-xl border-orange-500/20 bg-orange-500/5">
+              <h3 className="text-[10px] text-orange-500 font-bold uppercase flex items-center gap-2 mb-2">
+                <AlertTriangle className="w-3 h-3" /> Recent Alerts
+              </h3>
+              <div className="space-y-2 max-h-36 overflow-y-auto custom-scrollbar">
+                {alerts.slice(0, 5).map((a, idx) => (
+                  <div key={idx} className="text-[11px] text-white/60">
+                    {a.sent_at ? new Date(a.sent_at).toLocaleTimeString() : ''} - {a.message_preview || a.type}
+                  </div>
+                ))}
+              </div>
+           </div>
+         )}
       </aside>
     </div>
   );
 };
 
 // 4. TAB: MAPPING
-const MappingTab = () => {
-  const [layers, setLayers] = useState<any[]>([]);
-  const [activeLayer, setActiveLayer] = useState<number | null>(null);
+const MappingTab = ({ storeId }: { storeId: string }) => {
+  const [file, setFile] = useState<File | null>(null);
+  const [uploading, setUploading] = useState(false);
+  const [statusMsg, setStatusMsg] = useState('');
+  const [isError, setIsError] = useState(false);
 
-  const onDrop = useCallback((acceptedFiles: File[]) => {
-    acceptedFiles.forEach(file => {
-      const reader = new FileReader();
-      reader.onload = () => {
-        setLayers(prev => [...prev, {
-          id: Date.now(),
-          name: file.name,
-          type: file.type,
-          data: reader.result,
-          x: 0, y: 0, scale: 1, rotate: 0
-        }]);
-      };
-      reader.readAsDataURL(file);
-    });
-  }, []);
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.files && e.target.files[0]) {
+      setFile(e.target.files[0]);
+      setStatusMsg('');
+    }
+  };
 
-  const { getRootProps, getInputProps, isDragActive } = useDropzone({ onDrop } as any);
-
-  const updateLayer = (id: number, delta: any) => {
-    setLayers(prev => prev.map(l => l.id === id ? { ...l, ...delta } : l));
+  const handleUpload = async () => {
+    if (!file) {
+      setStatusMsg("Please select a file first");
+      setIsError(true);
+      return;
+    }
+    if (!storeId) {
+      setStatusMsg("No client store selected. Please select a client first.");
+      setIsError(true);
+      return;
+    }
+    setUploading(true);
+    setStatusMsg("Uploading floor plan...");
+    setIsError(false);
+    try {
+      const formData = new FormData();
+      formData.append('file', file);
+      
+      const res = await fetch(`${API_BASE}/api/mapping/floorplan?store_id=${storeId}`, {
+        method: 'POST',
+        body: formData,
+        headers: {
+          'X-Admin-Token': sessionAdminToken
+        }
+      });
+      const data = await res.json();
+      if (res.ok) {
+        setStatusMsg("Floor plan uploaded successfully!");
+        setIsError(false);
+        setFile(null);
+      } else {
+        setStatusMsg(data.detail || "Upload failed");
+        setIsError(true);
+      }
+    } catch (e: any) {
+      setStatusMsg("Network error: failed to upload");
+      setIsError(true);
+    } finally {
+      setUploading(false);
+    }
   };
 
   return (
-    <div className="flex h-full gap-6 p-6 overflow-hidden">
-      <aside className="w-80 flex flex-col gap-4 h-full overflow-y-auto custom-scrollbar">
-        <GlassCard className="p-6">
-          <div {...getRootProps()} className={`border-2 border-dashed rounded-xl p-8 transition-all text-center cursor-pointer ${isDragActive ? 'border-auris-cyan bg-auris-cyan/5' : 'border-white/10 hover:border-auris-cyan/30'}`}>
-            <input {...getInputProps()} />
-            <FileUp className="w-8 h-8 text-auris-cyan mx-auto mb-4" />
-            <p className="text-[10px] uppercase tracking-widest text-white/40">Upload LiDAR / SVG / DXF</p>
+    <div className="flex h-full items-center justify-center p-6 bg-auris-bg w-full">
+      <GlassCard className="p-8 max-w-md w-full">
+        <h2 className="text-lg font-display font-medium text-white mb-2 uppercase tracking-wide">Upload floor plan (.json, .svg)</h2>
+        <p className="text-[10px] text-white/40 mb-6 tracking-wide">Upload floor plan (.json from Polycam, or .svg)</p>
+        
+        <div className="space-y-6">
+          <div className="border border-white/10 rounded-xl p-6 bg-white/5 flex flex-col items-center justify-center min-h-[120px]">
+            <input 
+              type="file" 
+              accept=".json,.svg" 
+              onChange={handleFileChange} 
+              id="floorplan-upload-input"
+              className="hidden" 
+            />
+            <label 
+              htmlFor="floorplan-upload-input"
+              className="cursor-pointer px-4 py-2.5 bg-white/10 hover:bg-white/20 rounded-lg text-xs font-mono tracking-wider transition-colors text-white"
+            >
+              {file ? file.name : "Choose File"}
+            </label>
+            {file && (
+              <span className="text-[10px] text-white/40 mt-2 font-mono">
+                {(file.size / 1024).toFixed(1)} KB
+              </span>
+            )}
           </div>
-        </GlassCard>
 
-        {layers.map((layer, i) => (
-          <GlassCard key={layer.id} className={`p-4 cursor-pointer transition-all ${activeLayer === i ? 'ring-1 ring-auris-cyan' : ''}`} onClick={() => setActiveLayer(i)}>
-            <div className="flex justify-between items-center mb-4">
-              <span className="text-[11px] font-mono truncate max-w-[150px]">{layer.name}</span>
-              <button onClick={(e) => { e.stopPropagation(); setLayers(prev => prev.filter(l => l.id !== layer.id)) }} className="text-white/20 hover:text-red-500">
-                <Trash2 className="w-3 h-3" />
-              </button>
-            </div>
-            
-            <div className="space-y-4">
-               <TransformSlider label="Offset X" value={layer.x} min={-500} max={500} onChange={(v: number) => updateLayer(layer.id, { x: v })} />
-               <TransformSlider label="Offset Y" value={layer.y} min={-500} max={500} onChange={(v: number) => updateLayer(layer.id, { y: v })} />
-               <TransformSlider label="Scale" value={layer.scale} min={0.1} max={5} step={0.01} onChange={(v: number) => updateLayer(layer.id, { scale: v })} />
-               <TransformSlider label="Rotate" value={layer.rotate} min={0} max={360} onChange={(v: number) => updateLayer(layer.id, { rotate: v })} />
-            </div>
-          </GlassCard>
-        ))}
-        
-        <button 
-          onClick={() => alert("LiDAR constraints stitched. Executing RoomPlan mesh solver on Azure...")}
-          className="relative overflow-hidden px-6 py-4 rounded font-display font-medium bg-gradient-to-r from-blue-600 to-auris-purple uppercase tracking-[0.2em] text-[10px] mt-auto"
-        >
-           Commit Stitched Map
-        </button>
-      </aside>
-
-      <main className="flex-1 glass rounded-3xl relative overflow-hidden bg-[hsl(240,10%,3%)]">
-        <div className="absolute inset-0 opacity-5" style={{ backgroundImage: 'linear-gradient(rgba(255,255,255,0.1) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,0.1) 1px, transparent 1px)', backgroundSize: '40px 40px' }} />
-        
-        <div className="flex items-center justify-center h-full">
-          {layers.length === 0 ? (
-            <div className="text-center text-white/20">
-              <Layers className="w-12 h-12 mx-auto mb-4 opacity-20" />
-              <p className="text-xs uppercase tracking-widest">No mapping layers active</p>
-            </div>
-          ) : (
-            <div className="relative w-full h-full flex items-center justify-center">
-               {layers.map((layer, i) => (
-                 <motion.div 
-                   key={layer.id}
-                   animate={{ x: layer.x, y: layer.y, scale: layer.scale, rotate: layer.rotate }}
-                   className={`absolute w-3/4 h-3/4 flex items-center justify-center pointer-events-none ${activeLayer === i ? 'opacity-100' : 'opacity-30'}`}
-                 >
-                   {typeof layer.data === 'string' && layer.data.startsWith('data:image') ? (
-                     <img src={layer.data} className="max-w-full max-h-full border border-auris-cyan/30 shadow-[0_0_20px_rgba(0,255,255,0.1)]" draggable={false} />
-                   ) : (
-                     <div className="w-full h-full glass border-auris-cyan/40 p-12 flex items-center justify-center font-mono text-[10px]">
-                        [LEGACY DATA RENDER]
-                     </div>
-                   )}
-                 </motion.div>
-               ))}
+          {statusMsg && (
+            <div className={`p-3 rounded-lg text-[10px] font-mono border ${isError ? 'bg-red-500/10 border-red-500/20 text-red-400' : 'bg-auris-cyan/10 border-auris-cyan/20 text-auris-cyan'}`}>
+              {statusMsg.toUpperCase()}
             </div>
           )}
+
+          <button 
+            onClick={handleUpload}
+            disabled={uploading || !file}
+            className="w-full relative overflow-hidden px-6 py-4 rounded font-display font-medium bg-gradient-to-r from-blue-600 to-auris-purple uppercase tracking-[0.2em] text-[10px] disabled:opacity-30"
+          >
+            {uploading ? "Uploading..." : "Upload Floor Plan"}
+          </button>
         </div>
-      </main>
+      </GlassCard>
     </div>
   );
 };
-
-function TransformSlider({ label, value, ...props }: any) {
-  return (
-    <div className="space-y-1">
-      <div className="flex justify-between text-[9px] uppercase tracking-tighter text-white/40 font-mono">
-        <span>{label}</span>
-        <span>{value}</span>
-      </div>
-      <input type="range" className="w-full h-1 bg-white/10 rounded-full appearance-none accent-auris-cyan cursor-pointer" value={value} onChange={e => props.onChange(Number(e.target.value))} {...props} />
-    </div>
-  );
-}
 
 // 5. TAB: CALIBRATION
 const CalibrationTab = ({ storeId, password }: { storeId: string; password?: string }) => {
     const [points, setPoints] = useState<any[]>([]);
     const [imgUrl, setImgUrl] = useState('https://picsum.photos/seed/calibrate/1200/800');
-    const [cameraId, setCameraId] = useState('CAM_001');
+    const [cameraId, setCameraId] = useState('');
     const [calibMsg, setCalibMsg] = useState('');
+    const [cameras, setCameras] = useState<any[]>([]);
+
+    useEffect(() => {
+      const fetchCameras = async () => {
+        if (!storeId) return;
+        try {
+          const res = await fetch(`${API_BASE}/api/factory/cameras`, {
+            headers: {
+              'X-Store-ID': storeId,
+              'X-Password': password || 'test123'
+            }
+          });
+          if (res.ok) {
+            const data = await res.json();
+            if (data && Array.isArray(data.cameras)) {
+              setCameras(data.cameras);
+              if (data.cameras.length > 0) {
+                setCameraId(data.cameras[0].camera_id);
+              }
+            }
+          }
+        } catch (e) {
+          console.error("Failed to fetch cameras in CalibrationTab:", e);
+        }
+      };
+      fetchCameras();
+    }, [storeId, password]);
 
     const fetchSnapshot = async () => {
+      if (!cameraId) return;
       try {
         const res = await fetch(`${API_BASE}/api/calibration/snapshot?store_id=${storeId}&camera_id=${cameraId}`, {
           headers: {
@@ -739,7 +784,7 @@ const CalibrationTab = ({ storeId, password }: { storeId: string; password?: str
         setCalibMsg("Please select exactly 4 points.");
         return;
       }
-      setCalibMsg("Solving homography system matrix...");
+      setCalibMsg("Saving...");
       try {
         const payload = {
           store_id: storeId,
@@ -764,20 +809,20 @@ const CalibrationTab = ({ storeId, password }: { storeId: string; password?: str
         });
         const data = await res.json();
         if (res.ok) {
-          setCalibMsg(`Solver success! Dynamic RMSE: ${data.rmse_m.toFixed(4)} meters.`);
+          setCalibMsg(`Calibration success! RMSE: ${data.rmse_m.toFixed(4)} meters.`);
         } else {
-          setCalibMsg(`Solve error: ${data.detail || "Homography system is singular."}`);
+          setCalibMsg(`Calibration error: ${data.detail || "Homography system is singular."}`);
         }
       } catch (e) {
-        setCalibMsg("Failed to solve homography.");
+        setCalibMsg("Failed to calibrate camera.");
       }
     };
 
     return (
-        <div className="flex h-full p-6 gap-6">
+        <div className="flex h-full p-6 gap-6 w-full">
             <aside className="w-96 flex flex-col gap-6 h-full overflow-y-auto custom-scrollbar">
                 <GlassCard className="p-6">
-                    <h3 className="text-xs uppercase tracking-widest text-auris-cyan mb-6">Homography Solver</h3>
+                    <h3 className="text-xs uppercase tracking-widest text-auris-cyan mb-6">Camera Calibration</h3>
                     <p className="text-[10px] text-white/40 mb-6 italic">Click 4 points on the floor to establish real-world scale.</p>
                     
                     <div className="space-y-4">
@@ -803,7 +848,7 @@ const CalibrationTab = ({ storeId, password }: { storeId: string; password?: str
                       disabled={points.length < 4} 
                       className="relative overflow-hidden px-6 py-4 rounded font-display bg-gradient-to-r from-blue-600 to-auris-purple w-full uppercase tracking-[0.2em] text-[10px] mt-8 disabled:opacity-30"
                     >
-                        Compute Homography 3x3
+                        Save Floor Plan
                     </button>
                     <button onClick={() => { setPoints([]); setCalibMsg(''); }} className="w-full text-[9px] uppercase tracking-widest text-white/20 mt-4 hover:text-white/40">Clear Calibration</button>
                     
@@ -817,22 +862,29 @@ const CalibrationTab = ({ storeId, password }: { storeId: string; password?: str
                 <div className="space-y-2">
                     <h4 className="text-[9px] uppercase tracking-widest text-white/40 ml-2">Camera Registry</h4>
                     <GlassCard className="p-4 space-y-2">
-                        {['CAM_001', 'CAM_002', 'CAM_003'].map(id => (
-                            <div 
-                              key={id} 
-                              className={`flex items-center justify-between p-2 rounded hover:bg-white/5 transition-colors group cursor-pointer ${cameraId === id ? 'bg-white/10 border-l-2 border-auris-cyan' : ''}`}
-                              onClick={() => { setCameraId(id); setPoints([]); setCalibMsg(''); }}
-                            >
-                                <div className="flex items-center gap-3">
-                                    <Camera className="w-4 h-4 text-white/20" />
-                                    <span className="text-xs font-mono">{id}</span>
-                                </div>
-                                <div className="flex items-center gap-2">
-                                     <div className={`w-1.5 h-1.5 rounded-full ${cameraId === id ? 'bg-auris-cyan' : 'bg-white/10'}`} />
-                                     <ChevronRight className="w-3 h-3 text-white/10 group-hover:text-auris-cyan" />
-                                </div>
-                            </div>
-                        ))}
+                        {cameras.length === 0 ? (
+                            <div className="p-4 text-[10px] font-mono text-white/30 text-center">No cameras active</div>
+                        ) : (
+                            cameras.map(c => {
+                                const id = c.camera_id;
+                                return (
+                                    <div 
+                                      key={id} 
+                                      className={`flex items-center justify-between p-2 rounded hover:bg-white/5 transition-colors group cursor-pointer ${cameraId === id ? 'bg-white/10 border-l-2 border-auris-cyan' : ''}`}
+                                      onClick={() => { setCameraId(id); setPoints([]); setCalibMsg(''); }}
+                                    >
+                                        <div className="flex items-center gap-3">
+                                            <Camera className="w-4 h-4 text-white/20" />
+                                            <span className="text-xs font-mono">{id}</span>
+                                        </div>
+                                        <div className="flex items-center gap-2">
+                                             <div className={`w-1.5 h-1.5 rounded-full ${cameraId === id ? 'bg-auris-cyan' : 'bg-white/10'}`} />
+                                             <ChevronRight className="w-3 h-3 text-white/10 group-hover:text-auris-cyan" />
+                                        </div>
+                                    </div>
+                                );
+                            })
+                        )}
                     </GlassCard>
                 </div>
             </aside>
@@ -856,7 +908,7 @@ const CalibrationTab = ({ storeId, password }: { storeId: string; password?: str
 
                 <div className="absolute bottom-6 left-6 flex items-center gap-4">
                     <div className="glass px-4 py-2 rounded-full text-[10px] font-mono text-white/50 border-white/5">
-                        {cameraId} ACTIVE STREAM
+                        {cameraId || "NO ACTIVE STREAM"}
                     </div>
                 </div>
             </main>
@@ -875,7 +927,7 @@ const TrainingTab = () => {
   const fetchCases = async () => {
     try {
       const res = await fetch(`${API_BASE}/api/training/hard-cases`, {
-        headers: { 'X-Admin-Key': ADMIN_KEY }
+        headers: { 'X-Admin-Token': sessionAdminToken }
       });
       const data = await res.json();
       if (data && Array.isArray(data.cases)) {
@@ -884,7 +936,7 @@ const TrainingTab = () => {
       
       // Load training stats
       const statRes = await fetch(`${API_BASE}/api/training/stats`, {
-        headers: { 'X-Admin-Key': ADMIN_KEY }
+        headers: { 'X-Admin-Token': sessionAdminToken }
       });
       const statData = await statRes.json();
       setStats(statData);
@@ -907,7 +959,7 @@ const TrainingTab = () => {
         method: 'POST',
         headers: { 
           'Content-Type': 'application/json',
-          'X-Admin-Key': ADMIN_KEY
+          'X-Admin-Token': sessionAdminToken
         },
         body: JSON.stringify({ case_id: caseId, action })
       });
@@ -924,15 +976,15 @@ const TrainingTab = () => {
   };
 
   const handleExport = async () => {
-    setExportMsg("Compiling training dataset manifests...");
+    setExportMsg("Exporting...");
     try {
       const res = await fetch(`${API_BASE}/api/training/export-yolo`, {
         method: 'POST',
-        headers: { 'X-Admin-Key': ADMIN_KEY }
+        headers: { 'X-Admin-Token': sessionAdminToken }
       });
       const data = await res.json();
       if (res.ok) {
-        setExportMsg(`Export complete! Manifest: ${data.approved_hard_cases} Approved Hard Cases, ${data.pseudo_labels} Pseudo Labels. GPU cluster job initiated.`);
+        setExportMsg(`Export complete! Manifest: ${data.approved_hard_cases} Approved Hard Cases, ${data.pseudo_labels} Pseudo Labels.`);
       }
     } catch (e) {
       setExportMsg("Export pipeline error.");
@@ -943,7 +995,7 @@ const TrainingTab = () => {
     return (
       <div className="h-full flex items-center justify-center font-mono text-xs text-white/40">
         <RefreshCw className="w-6 h-6 animate-spin mr-3 text-auris-cyan" />
-        Syncing AI Pseudo-Label Telemetry...
+        Loading...
       </div>
     );
   }
@@ -960,7 +1012,7 @@ const TrainingTab = () => {
              </div>
              <div className="space-y-1">
                 <div className="text-[10px] uppercase text-auris-purple tracking-widest">Model Version</div>
-                <div className="text-2xl font-display text-auris-purple">AURIS-V4.2</div>
+                <div className="text-2xl font-display text-auris-purple">YOLOv8-Auris</div>
              </div>
           </div>
           <button 
@@ -981,8 +1033,8 @@ const TrainingTab = () => {
           {!currentCase ? (
             <GlassCard className="p-8 text-center max-w-md w-full">
                <ShieldCheck className="w-12 h-12 text-auris-cyan mx-auto mb-4 animate-pulse" />
-               <h3 className="text-lg font-display uppercase tracking-widest text-white/90">Overwatch Calibrated</h3>
-               <p className="text-xs text-white/40 mt-2">All pseudo-labels and custom class drift logs are successfully updated. Nominal training pipeline.</p>
+               <h3 className="text-lg font-display uppercase tracking-widest text-white/90">All cases reviewed</h3>
+               <p className="text-xs text-white/40 mt-2">All pseudo-labels and custom class drift logs are successfully reviewed.</p>
             </GlassCard>
           ) : (
             <>
@@ -1024,6 +1076,7 @@ const ReportTab = ({ storeId, password }: { storeId: string; password?: string }
   const [loading, setLoading] = useState(false);
   const [report, setReport] = useState<string>('');
   const [generatedAt, setGeneratedAt] = useState<string>('');
+  const [deadtimeData, setDeadtimeData] = useState<any>(null);
 
   const fetchReport = async () => {
     setLoading(true);
@@ -1039,9 +1092,21 @@ const ReportTab = ({ storeId, password }: { storeId: string; password?: string }
         setReport(data.report);
         setGeneratedAt(data.generated_at);
       }
+      
+      // Fetch dead time data
+      const dtRes = await fetch(`${API_BASE}/api/factory/deadtime`, {
+        headers: {
+          'X-Store-ID': storeId,
+          'X-Password': password || 'test123'
+        }
+      });
+      if (dtRes.ok) {
+        const dtData = await dtRes.json();
+        setDeadtimeData(dtData);
+      }
     } catch (e) {
       console.error(e);
-      setReport("Connection failed: could not load intelligence synopsis.");
+      setReport("Connection failed: could not load report.");
     } finally {
       setLoading(false);
     }
@@ -1054,18 +1119,18 @@ const ReportTab = ({ storeId, password }: { storeId: string; password?: string }
   const handlePrint = () => window.print();
 
   return (
-    <div className="h-full p-12 max-w-5xl mx-auto overflow-y-auto custom-scrollbar print:p-0">
+    <div className="h-full p-12 max-w-5xl mx-auto overflow-y-auto custom-scrollbar print:p-0 w-full">
        <header className="flex justify-between items-center mb-12">
           <div>
-            <h1 className="text-[10px] uppercase tracking-[0.4em] font-mono text-auris-cyan">AURIS EXECUTIVE SYNOPSIS</h1>
-            <h2 className="text-3xl font-display font-light mt-2 tracking-tight uppercase">Daily Spatial Intelligence</h2>
+            <h1 className="text-[10px] uppercase tracking-[0.4em] font-mono text-auris-cyan">AI Report</h1>
+            <h2 className="text-3xl font-display font-light mt-2 tracking-tight uppercase">Factory Intelligence Report</h2>
           </div>
           <div className="flex gap-3 print:hidden">
             <button className="glass p-3 rounded-xl border-white/5 hover:bg-white/5" onClick={fetchReport}>
                <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
             </button>
             <button className="relative overflow-hidden px-6 py-3 rounded font-display bg-gradient-to-r from-blue-600 to-auris-purple uppercase tracking-widest text-[10px]" onClick={handlePrint}>
-               Export Intelligence PDF
+               Download PDF
             </button>
           </div>
        </header>
@@ -1073,24 +1138,24 @@ const ReportTab = ({ storeId, password }: { storeId: string; password?: string }
        {loading ? (
          <div className="h-48 flex items-center justify-center font-mono text-xs text-white/40">
            <RefreshCw className="w-6 h-6 animate-spin mr-3 text-auris-cyan" />
-           Aggregating Multi-Modal Spatial insights...
+           Generating report...
          </div>
        ) : (
          <div className="grid grid-cols-3 gap-6">
             <GlassCard className="col-span-2 p-8" glow>
                <h3 className="text-xs font-display font-bold uppercase tracking-widest text-auris-cyan mb-6 flex items-center gap-2">
-                 <FileText className="w-4 h-4" /> Tactical Summary
+                 <FileText className="w-4 h-4" /> Summary
                </h3>
                <p className="text-md leading-relaxed text-white/85 font-display font-light border-l-2 border-auris-cyan pl-8 whitespace-pre-wrap">
-                  {report || "Synchronizing with spatial intelligence engine..."}
+                  {report || "No data recorded."}
                </p>
                <div className="mt-12 pt-8 border-t border-white/5 flex gap-12">
                   <div className="space-y-1">
-                    <div className="text-[9px] uppercase text-white/30">Intelligence Target</div>
+                    <div className="text-[9px] uppercase text-white/30">Factory</div>
                     <div className="text-sm font-mono text-auris-cyan">{storeId.toUpperCase()}</div>
                   </div>
                   <div className="space-y-1">
-                    <div className="text-[9px] uppercase text-white/30">Generated Epoch</div>
+                    <div className="text-[9px] uppercase text-white/30">Generated at</div>
                     <div className="text-sm font-mono">
                       {generatedAt ? new Date(generatedAt).toLocaleString() : 'N/A'}
                     </div>
@@ -1099,18 +1164,27 @@ const ReportTab = ({ storeId, password }: { storeId: string; password?: string }
             </GlassCard>
 
             <div className="space-y-6">
-               <GlassCard className="p-6">
-                  <div className="text-[9px] uppercase tracking-widest text-white/30 mb-2">Zone A (Active Core)</div>
-                  <div className="text-xl font-display text-auris-cyan">98.2% Nominal Efficiency</div>
-               </GlassCard>
-               <GlassCard className="p-6">
-                  <div className="text-[9px] uppercase tracking-widest text-white/30 mb-2">Zone B (Loading Area)</div>
-                  <div className="text-xl font-display text-auris-purple">Proximity Bounds Steady</div>
-               </GlassCard>
-               <GlassCard className="p-6">
-                  <div className="text-[9px] uppercase tracking-widest text-white/30 mb-2">Zone C (Transit Hub)</div>
-                  <div className="text-xl font-display text-auris-orange">1.4m Peak Congestion</div>
-               </GlassCard>
+               {!deadtimeData || !deadtimeData.by_zone || deadtimeData.by_zone.length === 0 ? (
+                 <GlassCard className="p-6">
+                    <div className="text-[10px] font-mono text-white/40 text-center">Data available after Day 7</div>
+                 </GlassCard>
+               ) : (
+                 deadtimeData.by_zone.slice(0, 3).map((z: any, idx: number) => {
+                   const colors = ['text-auris-cyan', 'text-auris-purple', 'text-auris-orange'];
+                   const color = colors[idx % colors.length];
+                   return (
+                     <GlassCard key={idx} className="p-6">
+                        <div className="text-[9px] uppercase tracking-widest text-white/30 mb-2">{z.zone_label || z.zone_id}</div>
+                        <div className={`text-xl font-display ${color}`}>
+                          {z.dead_hours.toFixed(1)} hrs idle
+                        </div>
+                        <div className="text-[10px] font-mono text-white/40 mt-1">
+                          Cost Impact: ₹{Math.round(z.dead_cost_inr).toLocaleString('en-IN')}
+                        </div>
+                     </GlassCard>
+                   );
+                 })
+               )}
             </div>
          </div>
        )}
@@ -1118,9 +1192,8 @@ const ReportTab = ({ storeId, password }: { storeId: string; password?: string }
        <div className="mt-12 grid grid-cols-2 gap-6">
           <GlassCard className="p-8">
              <h3 className="text-[10px] uppercase tracking-widest text-white/40 mb-6 font-bold">Spatial Density Heatmap (Daily Avg)</h3>
-             <div className="aspect-video glass rounded-xl overflow-hidden relative">
-                <img src="https://picsum.photos/seed/heatmap/800/450" className="w-full h-full object-cover blur-sm opacity-50" referrerPolicy="no-referrer" />
-                <div className="absolute inset-0 bg-gradient-to-tr from-blue-900/40 via-red-900/40 to-yellow-900/40 mix-blend-overlay" />
+             <div className="aspect-video glass rounded-xl overflow-hidden relative flex items-center justify-center bg-black/25">
+                <span className="text-[10px] font-mono text-white/40">Heatmap visualization will be available after Day 7</span>
              </div>
           </GlassCard>
           <GlassCard className="p-8">
@@ -1128,11 +1201,11 @@ const ReportTab = ({ storeId, password }: { storeId: string; password?: string }
              <div className="space-y-4">
                 <p className="text-[11px] text-white/60 flex items-start gap-3">
                   <span className="w-1 h-1 rounded-full bg-auris-cyan mt-1.5" />
-                  Calibrate Lobby Camera 4 - observed drift in homography matrix.
+                  Calibrate Lobby Camera 4 - observed drift in calibration matrix.
                 </p>
                 <p className="text-[11px] text-white/60 flex items-start gap-3">
                   <span className="w-1 h-1 rounded-full bg-auris-cyan mt-1.5" />
-                  Review Zone B person-count threshold; proximity alerts triggered.
+                  Review workstation headcount thresholds; low headcount warnings triggered.
                 </p>
              </div>
           </GlassCard>
@@ -1141,7 +1214,7 @@ const ReportTab = ({ storeId, password }: { storeId: string; password?: string }
   );
 };
 
-// 7.5. TAB: FACTORY ONBOARDING & ENVIRONMENT MANAGEMENT
+// 7.5. TAB: FACTORY ONBOARDING & CLIENT MANAGEMENT
 const FactoryOnboardingView = ({ storeId: initialStoreId }: { storeId: string | null }) => {
   const [stores, setStores] = useState<any[]>([]);
   const [configs, setConfigs] = useState<any[]>([]);
@@ -1156,7 +1229,7 @@ const FactoryOnboardingView = ({ storeId: initialStoreId }: { storeId: string | 
     try {
       // 1. Fetch stores
       const resStores = await fetch(`${API_BASE}/admin/stores`, {
-        headers: { 'X-Admin-Key': ADMIN_KEY }
+        headers: { 'X-Admin-Token': sessionAdminToken }
       });
       const dataStores = await resStores.json();
       
@@ -1168,12 +1241,12 @@ const FactoryOnboardingView = ({ storeId: initialStoreId }: { storeId: string | 
 
       // 2. Fetch configs
       const resConfigs = await fetch(`${API_BASE}/api/factory/configs`, {
-        headers: { 'X-Admin-Key': ADMIN_KEY }
+        headers: { 'X-Admin-Token': sessionAdminToken }
       });
       const dataConfigs = await resConfigs.json();
       setConfigs(dataConfigs.configs || []);
     } catch (e) {
-      console.error("Failed to load factory environment details:", e);
+      console.error("Failed to load factory details:", e);
     } finally {
       setLoading(false);
     }
@@ -1191,7 +1264,7 @@ const FactoryOnboardingView = ({ storeId: initialStoreId }: { storeId: string | 
         method: 'PATCH',
         headers: {
           'Content-Type': 'application/json',
-          'X-Admin-Key': ADMIN_KEY
+          'X-Admin-Token': sessionAdminToken
         },
         body: JSON.stringify({
           store_id: sid,
@@ -1199,14 +1272,14 @@ const FactoryOnboardingView = ({ storeId: initialStoreId }: { storeId: string | 
         })
       });
       if (res.ok) {
-        setSuccessMsg(`Factory "${sid.toUpperCase()}" promoted to live environment!`);
+        setSuccessMsg(`Factory "${sid.toUpperCase()}" promoted to active client!`);
         fetchData();
       } else {
         const errData = await res.json();
         setErrorMsg(errData.detail || "Failed to update factory status.");
       }
-    } catch (e) {
-      setErrorMsg("Connection failure during promotion.");
+    } catch (err: any) {
+      setErrorMsg(err.message || "Connection failure during promotion.");
     }
   };
 
@@ -1232,14 +1305,14 @@ const FactoryOnboardingView = ({ storeId: initialStoreId }: { storeId: string | 
     <div className="h-full p-4 md:p-12 max-w-6xl mx-auto overflow-y-auto custom-scrollbar relative">
       <header className="flex flex-col md:flex-row justify-between items-start md:items-end mb-8 md:mb-12 gap-4">
         <div>
-          <h2 className="text-[10px] uppercase tracking-[0.4em] font-mono text-auris-cyan">AURIS PROVISIONING CORE</h2>
+          <h2 className="text-[10px] uppercase tracking-[0.4em] font-mono text-auris-cyan">AURIS CLIENT ONBOARDING</h2>
           <h1 className="text-3xl font-display font-light mt-2 uppercase tracking-tight">Factory Onboarding</h1>
         </div>
         <button 
           onClick={() => handleOpenOnboard('')}
           className="relative overflow-hidden px-6 py-3 rounded font-display bg-gradient-to-r from-blue-600 to-auris-purple text-[10px] uppercase tracking-widest flex items-center gap-2 w-full md:w-auto justify-center"
         >
-          <Plus className="w-4 h-4" /> Onboard New Factory
+          <Plus className="w-4 h-4" /> Add New Client
         </button>
       </header>
 
@@ -1266,7 +1339,7 @@ const FactoryOnboardingView = ({ storeId: initialStoreId }: { storeId: string | 
         <GlassCard className="p-8 text-center max-w-md mx-auto">
           <LayoutGrid className="w-12 h-12 text-auris-cyan/40 mx-auto mb-4 animate-pulse" />
           <h3 className="text-sm font-display uppercase tracking-widest text-white/90">No Factory Store Registered</h3>
-          <p className="text-[11px] text-white/40 mt-2">Provision a store containing "factory" in its ID inside the System Registry (Registry tab) first.</p>
+          <p className="text-[11px] text-white/40 mt-2">Provision a store containing "factory" in its ID inside the Clients first.</p>
         </GlassCard>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
@@ -1352,13 +1425,13 @@ const FactoryOnboardingView = ({ storeId: initialStoreId }: { storeId: string | 
               {/* Store Selection if not pre-locked */}
               {!selectedOnboardStore ? (
                 <div className="mb-6 p-4 glass rounded-xl border-white/5 bg-black/25">
-                  <label className="block text-[9px] uppercase tracking-wider text-auris-cyan mb-2 font-mono">Select Factory Environment</label>
+                  <label className="block text-[9px] uppercase tracking-wider text-auris-cyan mb-2 font-mono">Select Factory Client</label>
                   <select 
                     value={selectedOnboardStore} 
                     onChange={e => setSelectedOnboardStore(e.target.value)}
                     className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-xs focus:outline-none focus:border-auris-cyan/50 text-white font-mono"
                   >
-                    <option value="" disabled className="bg-[#111] text-white/40">-- SELECT A PROVISIONED ENVIRONMENT --</option>
+                    <option value="" disabled className="bg-[#111] text-white/40">-- SELECT A PROVISIONED CLIENT --</option>
                     {stores
                       .filter(s => getFactoryStatus(s.store_id) === 'un-onboarded')
                       .map(s => (
@@ -1371,7 +1444,7 @@ const FactoryOnboardingView = ({ storeId: initialStoreId }: { storeId: string | 
               ) : (
                 <div className="mb-6 p-4 glass rounded-xl border-auris-cyan/15 bg-auris-cyan/5 flex justify-between items-center">
                   <div>
-                    <div className="text-[8px] font-mono text-auris-cyan uppercase tracking-widest">SELECTED ENVIRONMENT</div>
+                    <div className="text-[8px] font-mono text-auris-cyan uppercase tracking-widest">SELECTED CLIENT</div>
                     <div className="text-md font-display text-white mt-0.5">
                       {stores.find(s => s.store_id === selectedOnboardStore)?.store_name || selectedOnboardStore}
                     </div>
@@ -1387,7 +1460,7 @@ const FactoryOnboardingView = ({ storeId: initialStoreId }: { storeId: string | 
               ) : (
                 <div className="p-12 text-center border border-dashed border-white/10 rounded-2xl bg-black/10">
                   <LayoutGrid className="w-8 h-8 text-white/20 mx-auto mb-3" />
-                  <p className="text-[11px] text-white/40">Select a provisioned factory environment from the dropdown above to launch the step-by-step onboarding matrix.</p>
+                  <p className="text-[11px] text-white/40">Select a provisioned factory client from the dropdown above to launch the step-by-step onboarding matrix.</p>
                 </div>
               )}
             </motion.div>
@@ -1489,7 +1562,7 @@ const ManagementTab = ({
     setLoading(true);
     try {
       const storesRes = await fetch(`${API_BASE}/admin/stores`, {
-        headers: { 'X-Admin-Key': ADMIN_KEY }
+        headers: { 'X-Admin-Token': sessionAdminToken }
       });
       if (!storesRes.ok) throw new Error("Failed to load stores");
       const storesData = await storesRes.json();
@@ -1497,7 +1570,7 @@ const ManagementTab = ({
       let configsData = { configs: [] };
       try {
         const configsRes = await fetch(`${API_BASE}/api/factory/configs`, {
-          headers: { 'X-Admin-Key': ADMIN_KEY }
+          headers: { 'X-Admin-Token': sessionAdminToken }
         });
         if (configsRes.ok) {
           configsData = await configsRes.json();
@@ -1542,7 +1615,7 @@ const ManagementTab = ({
     const fetchStoreDetails = async () => {
       try {
         const res = await fetch(`${API_BASE}/admin/stores/${selectedClient}`, {
-          headers: { 'X-Admin-Key': ADMIN_KEY }
+          headers: { 'X-Admin-Token': sessionAdminToken }
         });
         if (res.ok) {
           const data = await res.json();
@@ -1579,7 +1652,7 @@ const ManagementTab = ({
       const fetchZonesList = async () => {
         try {
           const res = await fetch(`${API_BASE}/api/factory/zones?store_id=${selectedClient}`, {
-            headers: { 'X-Admin-Key': ADMIN_KEY }
+            headers: { 'X-Admin-Token': sessionAdminToken }
           });
           if (res.ok) {
             const data = await res.json();
@@ -1615,7 +1688,7 @@ const ManagementTab = ({
     const fetchLogs = async () => {
       try {
         const res = await fetch(`${API_BASE}/api/whatsapp/logs?store_id=${selectedClient}`, {
-          headers: { 'X-Admin-Key': ADMIN_KEY }
+          headers: { 'X-Admin-Token': sessionAdminToken }
         });
         if (res.ok) {
           const data = await res.json();
@@ -1640,7 +1713,7 @@ const ManagementTab = ({
         method: 'PATCH',
         headers: {
           'Content-Type': 'application/json',
-          'X-Admin-Key': ADMIN_KEY
+          'X-Admin-Token': sessionAdminToken
         },
         body: JSON.stringify({ password: newPassword })
       });
@@ -1666,7 +1739,7 @@ const ManagementTab = ({
           method: 'PATCH',
           headers: {
             'Content-Type': 'application/json',
-            'X-Admin-Key': ADMIN_KEY
+            'X-Admin-Token': sessionAdminToken
           },
           body: JSON.stringify({
             store_id: selectedClient,
@@ -1692,7 +1765,7 @@ const ManagementTab = ({
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'X-Admin-Key': ADMIN_KEY
+          'X-Admin-Token': sessionAdminToken
         },
         body: JSON.stringify({
           store_id: selectedClient
@@ -1714,7 +1787,7 @@ const ManagementTab = ({
         method: 'PATCH',
         headers: {
           'Content-Type': 'application/json',
-          'X-Admin-Key': ADMIN_KEY
+          'X-Admin-Token': sessionAdminToken
         },
         body: JSON.stringify({
           store_id: selectedClient,
@@ -1737,7 +1810,7 @@ const ManagementTab = ({
     try {
       const res = await fetch(`${API_BASE}/admin/stores/${selectedClient}`, {
         method: 'DELETE',
-        headers: { 'X-Admin-Key': ADMIN_KEY }
+        headers: { 'X-Admin-Token': sessionAdminToken }
       });
       if (!res.ok) throw new Error("Failed to delete client");
       
@@ -1763,7 +1836,7 @@ const ManagementTab = ({
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'X-Admin-Key': ADMIN_KEY
+          'X-Admin-Token': sessionAdminToken
         },
         body: JSON.stringify({
           store_id: cleanId,
@@ -1824,7 +1897,7 @@ const ManagementTab = ({
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'X-Admin-Key': ADMIN_KEY
+          'X-Admin-Token': sessionAdminToken
         },
         body: JSON.stringify(onboardPayload)
       });
@@ -1857,7 +1930,7 @@ const ManagementTab = ({
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'X-Admin-Key': ADMIN_KEY
+          'X-Admin-Token': sessionAdminToken
         },
         body: JSON.stringify({
           store_id: createdCredentials.store_id,
@@ -1891,7 +1964,7 @@ const ManagementTab = ({
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'X-Admin-Key': ADMIN_KEY
+          'X-Admin-Token': sessionAdminToken
         },
         body: JSON.stringify({
           store_id: selectedClientData.store_id,
@@ -1931,7 +2004,7 @@ const ManagementTab = ({
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
-            'X-Admin-Key': ADMIN_KEY
+            'X-Admin-Token': sessionAdminToken
           },
           body: JSON.stringify({ store_id: storeId, camera_id: cameraId, rtsp_url: rtspUrl })
         });
@@ -1979,7 +2052,7 @@ const ManagementTab = ({
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
-            'X-Admin-Key': ADMIN_KEY
+            'X-Admin-Token': sessionAdminToken
           },
           body: JSON.stringify({
             zone_config: json.zone_config || {},
@@ -2177,9 +2250,9 @@ const ManagementTab = ({
               <div className="w-12 h-12 rounded-full border border-dashed border-white/15 bg-white/5 flex items-center justify-center text-white/30 mb-4 animate-pulse">
                 <Radar className="w-5 h-5" />
               </div>
-              <h3 className="text-xs font-display uppercase tracking-widest text-white/70">Registry Hub Idle</h3>
+              <h3 className="text-xs font-display uppercase tracking-widest text-white/70">Clients Database Hub</h3>
               <p className="text-[10px] text-white/35 max-w-sm mt-2 leading-relaxed">
-                Select a live client from the registry database in Overwatch index to interface with their edge feeds, active zones, live footfall, and WhatsApp brief transaction logs.
+                Select a live client from the database in Overview to view their camera feeds, configured zones, active workers, and transaction logs.
               </p>
             </GlassCard>
           ) : (
@@ -2316,7 +2389,7 @@ const ManagementTab = ({
                             onClick={() => onSelectStore(selectedClient)}
                             className="w-full py-2.5 rounded-xl border border-auris-cyan/30 bg-auris-cyan/5 hover:bg-auris-cyan/15 text-auris-cyan text-[10px] font-mono uppercase font-bold tracking-wider transition-colors cursor-pointer flex items-center justify-center gap-2"
                           >
-                            <LayoutDashboard className="w-3.5 h-3.5" /> View Overwatch Dashboard
+                            <LayoutDashboard className="w-3.5 h-3.5" /> View Overview Dashboard
                           </button>
 
                           {/* Run Aggregation Now */}
@@ -2858,7 +2931,7 @@ const ManagementTab = ({
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
               onClick={() => {
-                if (addStep !== 4 && !window.confirm("Abandon onboarding wizard? The provision record will remain unconfigured.")) {
+                if (addStep !== 4 && !window.confirm("Abandon onboarding wizard? The client record will remain unconfigured.")) {
                   return;
                 }
                 setShowAddModal(false);
@@ -2878,8 +2951,8 @@ const ManagementTab = ({
               {/* Wizard Steps indicator */}
               <div className="flex items-center justify-between border-b border-white/5 pb-4 mb-5">
                 <div>
-                  <h3 className="text-xs font-display uppercase tracking-widest text-white/90">AURIS System Onboarding</h3>
-                  <span className="text-[9px] font-mono text-white/35 block mt-0.5">Provisioning spatial streams in the core cluster.</span>
+                  <h3 className="text-xs font-display uppercase tracking-widest text-white/90">Add New Client</h3>
+                  <span className="text-[9px] font-mono text-white/35 block mt-0.5">Add a new client and configure their details.</span>
                 </div>
                 
                 {/* Steps pills */}
@@ -2910,7 +2983,7 @@ const ManagementTab = ({
               {addStep === 1 && (
                 <form onSubmit={handleStep1Submit} className="space-y-4">
                   <h4 className="text-[10px] font-mono text-auris-cyan uppercase tracking-widest mb-3">
-                    STEP 1: IDENTITY & LICENSING PROVISIONING
+                    STEP 1: CLIENT IDENTITY
                   </h4>
                   
                   <div className="space-y-3.5">
@@ -2971,13 +3044,13 @@ const ManagementTab = ({
                       </div>
 
                       <div className="flex flex-col gap-1.5">
-                        <label className="text-[8px] font-mono uppercase tracking-widest text-white/40">ENCRYPTION / ACCESS KEY</label>
+                        <label className="text-[8px] font-mono uppercase tracking-widest text-white/40">PASSWORD</label>
                         <input
                           type="password"
                           required
                           value={addForm.password}
                           onChange={e => setAddForm({ ...addForm, password: e.target.value })}
-                          placeholder="PASSWORD IDENTIFIER..."
+                          placeholder="ENTER SECURE PASSWORD..."
                           className="bg-black/50 border border-white/10 rounded-xl py-2.5 px-3.5 text-xs font-mono text-white placeholder-white/25 focus:border-auris-cyan/40 focus:outline-none transition-colors"
                         />
                       </div>
@@ -2996,7 +3069,7 @@ const ManagementTab = ({
                       type="submit"
                       className="px-5 py-2 border border-auris-cyan/35 bg-auris-cyan/10 hover:bg-auris-cyan/20 text-auris-cyan rounded-xl text-[10px] font-mono uppercase font-bold tracking-wider cursor-pointer"
                     >
-                      Provision Client
+                      Create Client
                     </button>
                   </div>
                 </form>
@@ -3249,7 +3322,7 @@ const ManagementTab = ({
               {addStep === 3 && (
                 <div className="space-y-5 text-center py-6">
                   <h4 className="text-[10px] font-mono text-auris-cyan uppercase tracking-widest text-left">
-                    STEP 3: CONFIGURATION MATRIX MAPPING & FLOOR PLAN
+                    STEP 3: FLOOR PLAN MAPPING
                   </h4>
 
                   <div className="border border-dashed border-white/15 bg-black/25 rounded-2xl p-8 flex flex-col items-center justify-center gap-3">
@@ -3294,9 +3367,9 @@ const ManagementTab = ({
                     <div className="w-10 h-10 rounded-full bg-emerald-500/10 border border-emerald-500/30 flex items-center justify-center text-emerald-400 mb-2">
                       <Check className="w-5 h-5" />
                     </div>
-                    <h4 className="text-xs font-display uppercase tracking-widest text-emerald-400 font-bold">CLIENT PORTAL ONBOARD SYNCED</h4>
+                    <h4 className="text-xs font-display uppercase tracking-widest text-emerald-400 font-bold">Client Created Successfully</h4>
                     <p className="text-[9px] text-white/40 max-w-xs mt-1">
-                      Personnel credentials and system encryption keys successfully registered to core database cluster.
+                      Client credentials and configuration successfully registered.
                     </p>
                   </div>
 
@@ -3316,7 +3389,7 @@ const ManagementTab = ({
 
                     <div className="p-3 bg-black/30 border border-white/5 rounded-xl flex items-center justify-between text-[10px] font-mono">
                       <div>
-                        <span className="text-[7px] text-white/35 uppercase block">ENCRYPTION ACCESS KEY (PASSWORD)</span>
+                        <span className="text-[7px] text-white/35 uppercase block">Password</span>
                         <span className="text-white/80 font-bold select-all">{createdCredentials?.password}</span>
                       </div>
                       <button 
@@ -3329,7 +3402,7 @@ const ManagementTab = ({
 
                     <div className="p-3 bg-black/30 border border-white/5 rounded-xl flex items-center justify-between text-[10px] font-mono">
                       <div className="max-w-[85%]">
-                        <span className="text-[7px] text-white/35 uppercase block">CLOUD STREAM API KEY (SECRET)</span>
+                        <span className="text-[7px] text-white/35 uppercase block">API Key</span>
                         <span className="text-auris-cyan font-bold truncate block select-all">{createdCredentials?.api_key}</span>
                       </div>
                       <button 
@@ -3354,7 +3427,7 @@ const ManagementTab = ({
                       }}
                       className="px-6 py-2 bg-auris-cyan text-black font-mono uppercase font-bold text-[10px] tracking-wider rounded-xl hover:bg-auris-cyan/85 cursor-pointer shadow-lg shadow-auris-cyan/15"
                     >
-                      Registry Database Synced
+                      Done
                     </button>
                   </div>
                 </div>
@@ -3500,14 +3573,14 @@ const ManagementTab = ({
 
 // --- MAIN LOGIN ---
 const Login = ({ onLogin }: { onLogin: (s: string, p: string, name: string) => void }) => {
-  const [usr, setUsr] = useState('test_store2'); // Default to their real test store for absolute ease of use!
-  const [pwd, setPwd] = useState('test123'); // Default to their real password!
+  const [usr, setUsr] = useState('');
+  const [pwd, setPwd] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
 
   const handleSubmit = async () => {
     if (!usr || !pwd) {
-      setError("Please input personnel identifiers");
+      setError("Please input credentials");
       return;
     }
     setError('');
@@ -3518,11 +3591,27 @@ const Login = ({ onLogin }: { onLogin: (s: string, p: string, name: string) => v
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ store_id: usr, password: pwd })
       });
-      if (!res.ok) throw new Error("Invalid Encryption / Identification Credentials");
+      if (!res.ok) throw new Error("Invalid credentials");
       const data = await res.json();
+      
+      // Request admin session token if role is admin
+      if (data.role === 'admin') {
+        const verifyRes = await fetch(`${API_BASE}/api/admin/verify`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ admin_key: pwd })
+        });
+        if (verifyRes.ok) {
+          const verifyData = await verifyRes.json();
+          sessionAdminToken = verifyData.token;
+        } else {
+          throw new Error("Admin verification failed");
+        }
+      }
+      
       onLogin(data.store_id, pwd, data.store_name);
     } catch (e: any) {
-      setError(e.message || "Failed to synchronize with server core");
+      setError(e.message || "Failed to sign in");
     } finally {
       setLoading(false);
     }
@@ -3550,12 +3639,12 @@ const Login = ({ onLogin }: { onLogin: (s: string, p: string, name: string) => v
             </div>
           </div>
           <h1 className="text-[10px] tracking-[0.6em] font-mono text-auris-cyan/50 uppercase">AURIS BY SKYM LABS</h1>
-          <h2 className="text-2xl font-display font-medium mt-3 tracking-tight">AUTHORIZED ACCESS</h2>
+          <h2 className="text-2xl font-display font-medium mt-3 tracking-tight">Auris HQ</h2>
         </div>
 
         <div className="space-y-6">
            <div className="space-y-1">
-             <label className="text-[9px] uppercase tracking-widest text-white/40 ml-1">Personnel Identifier</label>
+             <label className="text-[9px] uppercase tracking-widest text-white/40 ml-1">Store ID</label>
              <div className="relative">
                 <User className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-white/20" />
                 <input 
@@ -3567,7 +3656,7 @@ const Login = ({ onLogin }: { onLogin: (s: string, p: string, name: string) => v
              </div>
            </div>
            <div className="space-y-1">
-             <label className="text-[9px] uppercase tracking-widest text-white/40 ml-1">Quantum Encryption</label>
+             <label className="text-[9px] uppercase tracking-widest text-white/40 ml-1">Password</label>
              <div className="relative">
                 <Lock className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-white/20" />
                 <input 
@@ -3591,13 +3680,13 @@ const Login = ({ onLogin }: { onLogin: (s: string, p: string, name: string) => v
              disabled={loading}
              className="relative overflow-hidden px-6 py-5 rounded font-display bg-gradient-to-r from-blue-600 to-auris-purple w-full text-[11px] uppercase tracking-[0.3em] mt-2 disabled:opacity-40"
            >
-              {loading ? "Decrypting Core Link..." : "Sync Intelligence Core"}
+              {loading ? "Signing in..." : "Sign In"}
            </button>
         </div>
 
         <div className="mt-12 flex items-center justify-center gap-3 text-[9px] font-mono text-white/20 uppercase tracking-widest">
            <div className="w-2 h-2 rounded-full bg-auris-cyan animate-pulse" />
-           Security Protocol 85-B Active
+           Skym Labs Pvt Ltd
         </div>
       </motion.div>
     </div>
@@ -3616,7 +3705,7 @@ export default function App() {
   useEffect(() => {
     if (storeId) {
       fetch(`${API_BASE}/api/factory/configs`, {
-        headers: { 'X-Admin-Key': ADMIN_KEY }
+        headers: { 'X-Admin-Token': sessionAdminToken }
       })
       .then(res => res.json())
       .then(data => {
@@ -3653,15 +3742,15 @@ export default function App() {
         </div>
 
         <div className="flex flex-1 flex-col gap-6">
-           <NavButton active={activeTab === 'mission'} onClick={() => setActiveTab('mission')} icon={<Globe />} label="Overwatch" />
+           <NavButton active={activeTab === 'mission'} onClick={() => setActiveTab('mission')} icon={<Globe />} label="Overview" />
            <NavButton active={activeTab === 'dashboard'} onClick={() => setActiveTab('dashboard')} icon={<LayoutDashboard />} label="Dashboard" />
            <NavButton active={activeTab === 'mapping'} onClick={() => setActiveTab('mapping')} icon={<Layers />} label="Mapping" />
            <NavButton active={activeTab === 'calibration'} onClick={() => setActiveTab('calibration')} icon={<RotateCw />} label="Calibration" />
-           <NavButton active={activeTab === 'report'} onClick={() => setActiveTab('report')} icon={<FileText />} label="Intelligence" />
+           <NavButton active={activeTab === 'report'} onClick={() => setActiveTab('report')} icon={<FileText />} label="Report" />
            <NavButton active={activeTab === 'training'} onClick={() => setActiveTab('training')} icon={<Cpu />} label="Training" />
            <NavButton active={activeTab === 'factory'} onClick={() => setActiveTab('factory')} icon={<LayoutGrid />} label="Factory" />
            <NavButton active={activeTab === 'factory_analytics'} onClick={() => setActiveTab('factory_analytics')} icon={<TrendingUp />} label="Analytics" />
-           <NavButton active={activeTab === 'management'} onClick={() => setActiveTab('management')} icon={<Settings />} label="Registry" />
+           <NavButton active={activeTab === 'management'} onClick={() => setActiveTab('management')} icon={<Settings />} label="Clients" />
         </div>
 
         <div className="mt-auto flex flex-col gap-6">
@@ -3690,7 +3779,7 @@ export default function App() {
               />
             )}
             {activeTab === 'dashboard' && <DashboardTab storeId={storeId} password={password} />}
-            {activeTab === 'mapping' && <MappingTab />}
+            {activeTab === 'mapping' && <MappingTab storeId={storeId || ''} />}
             {activeTab === 'calibration' && <CalibrationTab storeId={storeId} password={password} />}
             {activeTab === 'report' && <ReportTab storeId={storeId} password={password} />}
             {activeTab === 'training' && <TrainingTab />}
@@ -3716,7 +3805,7 @@ export default function App() {
                   <GlassCard className="p-8 text-center max-w-md">
                     <AlertTriangle className="w-12 h-12 text-auris-orange mx-auto mb-4 animate-pulse" />
                     <h3 className="text-sm font-display uppercase tracking-widest text-white/90">Select Store First</h3>
-                    <p className="text-[11px] text-white/45 mt-2">Go to Overwatch and select a store from Mission Control first.</p>
+                    <p className="text-[11px] text-white/45 mt-2">Go to Overview and select a store from Mission Control first.</p>
                   </GlassCard>
                 </div>
               )
@@ -3735,15 +3824,15 @@ export default function App() {
       {/* Mobile Bottom Tab Bar */}
       <nav className="flex md:hidden fixed bottom-0 left-0 right-0 h-20 z-50 bg-black/90 backdrop-blur-xl border-t border-white/10 overflow-x-auto custom-scrollbar">
         <div className="flex w-full items-center justify-between px-2 py-1 min-w-max">
-          <MobileNavButton active={activeTab === 'mission'} onClick={() => setActiveTab('mission')} icon={<Globe />} label="Overwatch" />
+          <MobileNavButton active={activeTab === 'mission'} onClick={() => setActiveTab('mission')} icon={<Globe />} label="Overview" />
           <MobileNavButton active={activeTab === 'dashboard'} onClick={() => setActiveTab('dashboard')} icon={<LayoutDashboard />} label="Dashboard" />
           <MobileNavButton active={activeTab === 'mapping'} onClick={() => setActiveTab('mapping')} icon={<Layers />} label="Mapping" />
           <MobileNavButton active={activeTab === 'calibration'} onClick={() => setActiveTab('calibration')} icon={<RotateCw />} label="Calibration" />
-          <MobileNavButton active={activeTab === 'report'} onClick={() => setActiveTab('report')} icon={<FileText />} label="Intelligence" />
+          <MobileNavButton active={activeTab === 'report'} onClick={() => setActiveTab('report')} icon={<FileText />} label="Report" />
           <MobileNavButton active={activeTab === 'training'} onClick={() => setActiveTab('training')} icon={<Cpu />} label="Training" />
           <MobileNavButton active={activeTab === 'factory'} onClick={() => setActiveTab('factory')} icon={<LayoutGrid />} label="Factory" />
           <MobileNavButton active={activeTab === 'factory_analytics'} onClick={() => setActiveTab('factory_analytics')} icon={<TrendingUp />} label="Analytics" />
-          <MobileNavButton active={activeTab === 'management'} onClick={() => setActiveTab('management')} icon={<Settings />} label="Registry" />
+          <MobileNavButton active={activeTab === 'management'} onClick={() => setActiveTab('management')} icon={<Settings />} label="Clients" />
         </div>
       </nav>
     </div>

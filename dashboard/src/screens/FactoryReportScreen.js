@@ -114,8 +114,8 @@ ${narratives.patterns || "No repetitive loss patterns narrative generated."}
         >
           <View style={styles.emptyCard}>
             <Text style={styles.emptyIcon}>⏳</Text>
-            <Text style={styles.emptyTitle}>Building Report Matrix</Text>
-            <Text style={styles.emptySub}>Not enough data yet. First report arrives on Day 7.</Text>
+            <Text style={styles.emptyTitle}>AI Report Pending</Text>
+            <Text style={styles.emptySub}>Your first AI report generates after Day 7</Text>
           </View>
         </ScrollView>
       ) : (

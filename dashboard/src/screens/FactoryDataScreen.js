@@ -145,7 +145,7 @@ export default function FactoryDataScreen({ store }) {
                     );
                   })
                 ) : (
-                  <Text style={styles.emptyText}>No zone data recorded.</Text>
+                  <Text style={styles.emptyText}>Dead time data appears after your first full shift is recorded</Text>
                 )}
               </View>
             )}
@@ -160,7 +160,7 @@ export default function FactoryDataScreen({ store }) {
 
             {bottleneckData?.cached === false ? (
               <View style={styles.emptyCacheContainer}>
-                <Text style={styles.learningSub}>Bottleneck data available after first nightly run.</Text>
+                <Text style={styles.learningSub}>Bottleneck data available after Day 2</Text>
               </View>
             ) : (
               <>
@@ -208,7 +208,7 @@ export default function FactoryDataScreen({ store }) {
                         </View>
                       ))
                     ) : (
-                      <Text style={styles.emptyText}>No bottleneck data found.</Text>
+                      <Text style={styles.emptyText}>Bottleneck data available after Day 2</Text>
                     )}
                   </View>
                 )}
@@ -225,7 +225,7 @@ export default function FactoryDataScreen({ store }) {
 
             {isLearningPatterns ? (
               <View style={styles.emptyCacheContainer}>
-                <Text style={styles.learningSub}>Building your picture. Check back on Day 7.</Text>
+                <Text style={styles.learningSub}>Pattern data available after Day 7</Text>
               </View>
             ) : (
               <>
@@ -270,7 +270,7 @@ export default function FactoryDataScreen({ store }) {
                         </View>
                       ))
                     ) : (
-                      <Text style={styles.emptyText}>No patterns flagged yet.</Text>
+                      <Text style={styles.emptyText}>Pattern data available after Day 7</Text>
                     )}
                   </View>
                 )}

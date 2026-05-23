@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from "react";
 import { View, Text, TouchableOpacity, StyleSheet, ActivityIndicator, SafeAreaView, Platform } from "react-native";
-import { getSavedCredentials, logout, fetchLive } from "./src/services/api";
+import { getSavedCredentials, logout, fetchLive, fetchFactoryCameras } from "./src/services/api";
 
 import LoginScreen from "./src/screens/LoginScreen";
 import CalibrationScreen from "./src/screens/CalibrationScreen";
@@ -37,11 +37,16 @@ export default function App() {
     if (store) {
       (async () => {
         try {
-          const res = await fetchLive(store.store_id, store.password);
-          if (res && res.cameras) {
-            setCameraCount(res.cameras.length);
+          if (store.plan === "factory") {
+            const res = await fetchFactoryCameras(store.store_id, store.password);
+            setCameraCount(res.total_online);
           } else {
-            setCameraCount(0);
+            const res = await fetchLive(store.store_id, store.password);
+            if (res && res.cameras) {
+              setCameraCount(res.cameras.length);
+            } else {
+              setCameraCount(0);
+            }
           }
         } catch (e) {
           console.log("Fetch camera count error:", e.message);
@@ -86,7 +91,7 @@ export default function App() {
         case "data": return <FactoryDataScreen store={store} />;
         case "report": return <FactoryReportScreen store={store} />;
         case "analytics": return <FactoryAnalyticsScreen store={store} />;
-        default: return <FactoryMapScreen store={store} />;
+        default: return <FactoryMapScreen store={store} setCameraCount={setCameraCount} />;
       }
     } else {
       switch (tab) {
@@ -99,6 +104,11 @@ export default function App() {
     }
   };
 
+  const createdDate = store.created_at ? new Date(store.created_at) : new Date();
+  const daysSinceCreation = Math.max(0, Math.floor((new Date() - createdDate) / (1000 * 60 * 60 * 24)));
+  const trialActive = daysSinceCreation <= 30;
+  const trialDay = Math.min(30, daysSinceCreation + 1);
+
   return (
     <SafeAreaView style={styles.container}>
       {/* Top Bar */}
@@ -106,13 +116,26 @@ export default function App() {
         <View style={styles.topBarInfo}>
           <Text style={styles.storeName}>{store.store_name || store.store_id}</Text>
           <Text style={styles.camCount}>
-            {cameraCount !== null ? `${cameraCount} Active Cameras` : "Loading cameras..."}
+            {cameraCount !== null ? (cameraCount > 0 ? `● ${cameraCount} cameras live` : "0 cameras live") : "Loading cameras..."}
           </Text>
         </View>
         <TouchableOpacity style={styles.logoutBtn} onPress={handleLogout}>
           <Text style={styles.logoutText}>Logout</Text>
         </TouchableOpacity>
       </View>
+
+      {/* Trial Progress Bar */}
+      {store.plan === "factory" && trialActive && (
+        <View style={styles.trialBar}>
+          <View style={styles.trialHeader}>
+            <Text style={styles.trialText}>Trial Day {trialDay} of 30 · Active</Text>
+            <Text style={styles.trialPercentage}>{Math.round((daysSinceCreation / 30) * 100)}%</Text>
+          </View>
+          <View style={styles.progressBarContainer}>
+            <View style={[styles.progressBar, { width: `${Math.min(100, (daysSinceCreation / 30) * 100)}%` }]} />
+          </View>
+        </View>
+      )}
 
       {/* Screen Content */}
       <View style={styles.content}>{renderScreen()}</View>
@@ -201,4 +224,38 @@ const styles = StyleSheet.create({
   tabActive: { opacity: 1 },
   tabLabel: { fontSize: 10, color: "#9CA3AF", fontWeight: "500" },
   tabLabelActive: { color: "#1A3C5E", fontWeight: "700" },
+  trialBar: {
+    backgroundColor: "#FFFBEB",
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderBottomWidth: 1,
+    borderColor: "#FDE68A",
+  },
+  trialHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginBottom: 6,
+  },
+  trialText: {
+    fontSize: 11,
+    fontWeight: "600",
+    color: "#D97706",
+  },
+  trialPercentage: {
+    fontSize: 11,
+    fontWeight: "700",
+    color: "#D97706",
+  },
+  progressBarContainer: {
+    height: 6,
+    backgroundColor: "#FEF3C7",
+    borderRadius: 3,
+    overflow: "hidden",
+  },
+  progressBar: {
+    height: "100%",
+    backgroundColor: "#F59E0B",
+    borderRadius: 3,
+  },
 });

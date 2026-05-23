@@ -1,4 +1,6 @@
 import os
+import secrets
+from datetime import datetime, timezone, timedelta
 from typing import Optional
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import PlainTextResponse
@@ -7,6 +9,46 @@ from pydantic import BaseModel
 from db import db, hash_password, generate_api_key, ADMIN_KEY
 
 router = APIRouter()
+
+# In-memory session store for admin tokens (token -> expiration datetime)
+admin_sessions = {}
+
+def verify_token(token: str) -> bool:
+    if not token:
+        return False
+    exp = admin_sessions.get(token)
+    if not exp:
+        return False
+    if datetime.now(timezone.utc) > exp:
+        # Token has expired, remove it
+        admin_sessions.pop(token, None)
+        return False
+    return True
+
+class VerifyAdminRequest(BaseModel):
+    admin_key: str
+
+@router.post("/admin/verify")
+async def verify_admin(body: VerifyAdminRequest):
+    expected_key = ADMIN_KEY or "dcd62cb40e5fa0870d73c79fbd521d05"
+    if body.admin_key != expected_key:
+        raise HTTPException(status_code=401, detail="Invalid admin key")
+    
+    token = secrets.token_hex(32)
+    admin_sessions[token] = datetime.now(timezone.utc) + timedelta(hours=8)
+    return {"token": token}
+
+def require_admin(request: Request):
+    # Try X-Admin-Token first
+    token = request.headers.get("X-Admin-Token", "")
+    if verify_token(token):
+        return
+        
+    # Fallback to X-Admin-Key for backward-compatibility
+    key = request.headers.get("X-Admin-Key", "")
+    expected_key = ADMIN_KEY or "dcd62cb40e5fa0870d73c79fbd521d05"
+    if not expected_key or key != expected_key:
+        raise HTTPException(status_code=403, detail="Invalid admin key or token")
 
 
 @router.get("/install.sh", response_class=PlainTextResponse)
@@ -32,14 +74,6 @@ async def get_install_script():
                 continue
                 
     raise HTTPException(status_code=404, detail="Installation script not found on server")
-
-
-
-def require_admin(request: Request):
-    key = request.headers.get("X-Admin-Key", "")
-    if not ADMIN_KEY or key != ADMIN_KEY:
-        raise HTTPException(status_code=403, detail="Invalid admin key")
-
 
 class UpdatePersonaRequest(BaseModel):
     instructions: str
