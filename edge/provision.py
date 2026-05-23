@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """
-Auris Edge Provisioning Wizard
+Auris Edge Provisioning Wizard (Upgraded)
 This script runs once to configure a fresh Auris N100 edge device.
+Performs automatic camera discovery, OpenCV validation, and HQ syncing.
 Compatible with both Windows (dev) and Linux (production).
-Uses only standard library modules and the requests package.
+Uses standard library modules + requests + cv2.
 """
 
 import os
@@ -11,8 +12,10 @@ import sys
 import socket
 import datetime
 import concurrent.futures
+import threading
 import requests
 import builtins
+import cv2
 
 # ------------------------------------------------------------------------------
 # ROBUST UNICODE-SAFE PRINT OVERRIDE
@@ -61,6 +64,8 @@ print = safe_print
 SERVER_URL = "https://auris.skymlabs.com"
 CONFIG_ENDPOINT = f"{SERVER_URL}/api/edge/config"
 FRAMES_ENDPOINT = f"{SERVER_URL}/api/frames"
+CAMERAS_UPDATE_ENDPOINT = f"{SERVER_URL}/api/factory/cameras/update"
+ADMIN_KEY = "dcd62cb40e5fa0870d73c79fbd521d05"
 
 # ------------------------------------------------------------------------------
 # HELPER FUNCTIONS
@@ -73,7 +78,6 @@ def get_local_ip():
     """Retrieves the local IP address of the machine."""
     s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     try:
-        # Connect to an external IP (does not actually send packets)
         s.connect(("8.8.8.8", 80))
         ip = s.getsockname()[0]
     except Exception:
@@ -81,18 +85,6 @@ def get_local_ip():
     finally:
         s.close()
     return ip
-
-def check_port(ip, port, timeout=0.2):
-    """Checks if a specific port is open on the target IP address."""
-    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    s.settimeout(timeout)
-    try:
-        s.connect((ip, port))
-        return True
-    except Exception:
-        return False
-    finally:
-        s.close()
 
 # ------------------------------------------------------------------------------
 # INTERACTIVE STEPS
@@ -162,48 +154,13 @@ def run_provisioning():
             continue
 
     # --------------------------------------------------------------------------
-    # STEP 3 — Camera discovery (if no cameras configured yet)
+    # STEP 3 — Auto Camera Discovery
     # --------------------------------------------------------------------------
-    print("STEP 3 — Camera Discovery")
-    if not cameras:
-        print("No cameras configured yet. Let's find them.")
-        print("Scanning network for cameras...")
+    print("STEP 3 — Auto Camera Discovery")
+    
+    working_cameras = []
 
-        local_ip = get_local_ip()
-        ip_parts = local_ip.split('.')
-        
-        # Determine subnet base (use current subnet or default fallback to 192.168.1.x)
-        if len(ip_parts) == 4 and ip_parts[0] != '127':
-            subnet_base = ".".join(ip_parts[:3])
-            print(f"Scanning base subnet: {subnet_base}.x on port 554 (RTSP)...")
-        else:
-            subnet_base = "192.168.1"
-            print(f"Could not determine local subnet. Scanning default base: 192.168.1.x on port 554...")
-
-        # Run multi-threaded socket scan for port 554
-        ips_to_scan = [f"{subnet_base}.{i}" for i in range(1, 255)]
-        found_devices = []
-
-        with concurrent.futures.ThreadPoolExecutor(max_workers=50) as executor:
-            future_to_ip = {executor.submit(check_port, ip, 554, 0.25): ip for ip in ips_to_scan}
-            for future in concurrent.futures.as_completed(future_to_ip):
-                ip = future_to_ip[future]
-                try:
-                    if future.result():
-                        found_devices.append(ip)
-                        print(f"Found device at {ip}:554")
-                except Exception:
-                    pass
-
-        print()
-        print("Enter RTSP URLs manually or configure in HQ portal first.")
-        
-        # Provide RTSP tips with either a found IP or placeholder
-        tip_ip = found_devices[0] if found_devices else "{ip}"
-        print(f"Tip: Default CPPlus RTSP: rtsp://admin:password@{tip_ip}:554/avstream/channel=1")
-        print(f"Tip: Default Hikvision RTSP: rtsp://admin:password@{tip_ip}:554/Streaming/Channels/101")
-        print()
-    else:
+    if cameras:
         print("Cameras configured on server:")
         for idx, cam in enumerate(cameras, 1):
             cam_id = cam.get("camera_id", f"CAM_{idx}")
@@ -212,19 +169,204 @@ def run_provisioning():
             print(f"  {idx}. [{cam_id}] {label} -> {rtsp}")
         print("✓ Camera config loaded from HQ portal")
         print()
+    else:
+        print("No cameras configured on the server yet. Let's find them automatically!")
+        print("Starting auto-discovery system...")
+        print()
+
+        # 3a. Get local subnet automatically
+        local_ip = get_local_ip()
+        ip_parts = local_ip.split('.')
+        
+        if len(ip_parts) == 4 and ip_parts[0] != '127':
+            subnet_base = ".".join(ip_parts[:3])
+        else:
+            subnet_base = "192.168.1"
+
+        # 3b. Port scan for cameras (max 50 threads)
+        potential_cameras = []
+        potential_lock = threading.Lock()
+        
+        semaphore = threading.BoundedSemaphore(50)
+        scanned_count = 0
+        count_lock = threading.Lock()
+        
+        def scan_ip(ip):
+            nonlocal scanned_count
+            with semaphore:
+                for port in [554, 5543, 8554]:
+                    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                    s.settimeout(1.0)
+                    res = s.connect_ex((ip, port))
+                    s.close()
+                    if res == 0:
+                        with potential_lock:
+                            potential_cameras.append((ip, port))
+                
+                with count_lock:
+                    scanned_count += 1
+                    percent = int((scanned_count / 254) * 100)
+                    sys.stdout.write(f"\rScanning {subnet_base}.x... {scanned_count}/254 IPs checked ({percent}%) — found {len(potential_cameras)} devices")
+                    sys.stdout.flush()
+
+        threads = []
+        print(f"Scanning subnet {subnet_base}.0/24 on camera ports 554, 5543, 8554...")
+        for i in range(1, 255):
+            ip = f"{subnet_base}.{i}"
+            t = threading.Thread(target=scan_ip, args=(ip,), daemon=True)
+            threads.append(t)
+            t.start()
+
+        for t in threads:
+            t.join()
+        
+        print() # Move to next line after scan finishes
+        print(f"Port scan completed. Found {len(potential_cameras)} potential devices.")
+        print()
+
+        if potential_cameras:
+            # 3c. Ask for camera password
+            print(f"Found {len(potential_cameras)} potential cameras on the network")
+            entered_pwd = input("Enter camera password (press Enter to try 'admin123'): ").strip()
+            if not entered_pwd:
+                entered_pwd = "admin123"
+
+            # Create unique passwords list to try
+            passwords_to_try = []
+            for p in [entered_pwd, "admin", "password", "12345", ""]:
+                if p not in passwords_to_try:
+                    passwords_to_try.append(p)
+
+            # 3d. Test each potential camera with common RTSP patterns
+            print("Verifying RTSP feeds using OpenCV video capture...")
+            
+            for ip, port in potential_cameras:
+                found_working_for_ip = False
+                for password in passwords_to_try:
+                    if found_working_for_ip:
+                        break
+                    
+                    # Patterns to try
+                    patterns = [
+                        f"rtsp://admin:{password}@{ip}:{port}/live/channel0",
+                        f"rtsp://admin:{password}@{ip}:{port}/avstream/channel=1",
+                        f"rtsp://admin:{password}@{ip}:{port}/Streaming/Channels/101",
+                        f"rtsp://admin:{password}@{ip}:{port}/stream1",
+                        f"rtsp://admin:{password}@{ip}:{port}/onvif1",
+                        f"rtsp://admin:{password}@{ip}:{port}/h264/ch1/main/av_stream"
+                    ]
+
+                    for url in patterns:
+                        # Handle blank password by trying without credentials
+                        if password == "":
+                            url = url.replace("admin:@", "")
+                        
+                        cap = cv2.VideoCapture(url)
+                        cap.set(cv2.CAP_PROP_OPEN_TIMEOUT_MSEC, 3000) # 3 seconds timeout
+                        ret, frame = cap.read()
+                        
+                        if ret and frame is not None:
+                            working_cameras.append((ip, port, url))
+                            print(f"✓ Camera found: {ip}:{port} — {url}")
+                            found_working_for_ip = True
+                            cap.release()
+                            break
+                        cap.release()
+
+                if not found_working_for_ip:
+                    print(f"✗ {ip} — no working stream found")
+
+        # 3e. If no cameras found automatically
+        if not working_cameras:
+            print()
+            print("Could not auto-detect cameras.")
+            print("Please add cameras manually in HQ portal:")
+            print("hq.skymlabs.com → Registry → [Client] → System → Edit Cameras")
+            try:
+                input("Press Enter to continue without cameras, or Ctrl+C to exit")
+            except KeyboardInterrupt:
+                print("\nAborted.")
+                sys.exit(0)
+            print()
+        else:
+            # 3f. If cameras found
+            print()
+            print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+            print(f"Found {len(working_cameras)} working cameras:")
+            for idx, (_, _, url) in enumerate(working_cameras, 1):
+                print(f"  cam{idx}: {url}")
+            print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+            print()
+
+            save_choice = input("Save these cameras to HQ portal? [Y/n]: ").strip().lower()
+            if save_choice in ('', 'y', 'yes'):
+                print("Saving to cloud registry...")
+                
+                # Format payload
+                cams_payload = []
+                for idx, (_, _, url) in enumerate(working_cameras, 1):
+                    cams_payload.append({
+                        "camera_id": f"cam{idx}",
+                        "rtsp_url": url,
+                        "label": f"Camera {idx}",
+                        "fps": 2
+                    })
+                
+                req_body = {
+                    "store_id": store_id,
+                    "cameras": cams_payload
+                }
+                req_headers = {
+                    "X-Admin-Key": ADMIN_KEY,
+                    "Content-Type": "application/json"
+                }
+
+                try:
+                    res = requests.post(CAMERAS_UPDATE_ENDPOINT, json=req_body, headers=req_headers, timeout=10)
+                    if res.status_code == 200:
+                        print("✓ Cameras saved to HQ portal")
+                    else:
+                        print(f"✗ Failed to save cameras to HQ: Server returned status code {res.status_code}")
+                except Exception as e:
+                    print(f"✗ Failed to save cameras to HQ: {e}")
+            
+            # Update local config.py
+            if os.name == 'nt':
+                config_path = os.path.join("edge", "src", "config.py")
+            else:
+                config_path = "/opt/auris/config.py"
+                
+            config_dir = os.path.dirname(config_path)
+            if config_dir and not os.path.exists(config_dir):
+                os.makedirs(config_dir, exist_ok=True)
+                
+            config_content = "# Auris Edge Configuration\n"
+            config_content += "CAMERAS = {\n"
+            for idx, (_, _, url) in enumerate(working_cameras, 1):
+                config_content += f'    "cam{idx}": {{"url": "{url}", "fps": 2}},\n'
+            config_content += "}\n\n"
+            config_content += f'STORE_ID = "{store_id}"\n'
+            config_content += f'API_BASE = "{SERVER_URL}"\n'
+            config_content += f'API_KEY = "{api_key}"\n'
+            
+            try:
+                with open(config_path, "w") as cf:
+                    cf.write(config_content)
+                print(f"✓ Updated local config file: {config_path}")
+            except Exception as e:
+                print(f"✗ Failed to write local config file: {e}")
+            print()
 
     # --------------------------------------------------------------------------
     # STEP 4 — Write .env file
     # --------------------------------------------------------------------------
     print("STEP 4 — Write .env file")
     
-    # Path depends on OS (Linux production vs Windows dev)
     if os.name == 'nt':
         env_path = os.path.join("edge", ".env")
     else:
         env_path = "/opt/auris/.env"
 
-    # Ensure parent directory exists
     parent_dir = os.path.dirname(env_path)
     if parent_dir and not os.path.exists(parent_dir):
         try:
@@ -232,12 +374,15 @@ def run_provisioning():
         except Exception as e:
             print(f"Warning: Could not create folder {parent_dir}: {e}")
 
-    # Construct file contents
     env_content = (
         f"CLOUD_API_KEY={api_key}\n"
         f"STORE_ID={store_id}\n"
         f"CLOUD_ENDPOINT={FRAMES_ENDPOINT}\n"
     )
+    
+    # Save all working RTSP URLs to .env
+    for idx, (_, _, url) in enumerate(working_cameras, 1):
+        env_content += f"CAM_{idx}_URL={url}\n"
 
     try:
         with open(env_path, "w") as env_file:
@@ -245,7 +390,6 @@ def run_provisioning():
         print(f"✓ Environment configuration successfully written to: {env_path}")
     except Exception as e:
         print(f"✗ Failed to write .env file: {e}")
-        print("Please check your file permissions.")
         sys.exit(1)
     print()
 
@@ -282,8 +426,9 @@ def run_provisioning():
     # --------------------------------------------------------------------------
     # STEP 6 — Done
     # --------------------------------------------------------------------------
+    total_cameras = len(cameras) if cameras else len(working_cameras)
     print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-    print("Auris Edge is configured and ready.")
+    print(f"Auris Edge is configured and ready with {total_cameras} cameras.")
     print("Run edge_worker.py to start streaming.")
     print("Or if using systemd: sudo systemctl start auris-edge")
     print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")

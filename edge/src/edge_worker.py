@@ -36,14 +36,6 @@ LOG_PATH = os.path.join(LOG_DIR, "edge.log")
 os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
 os.makedirs(LOG_DIR, exist_ok=True)
 
-# Load environment variables
-load_dotenv(ENV_PATH)
-
-CLOUD_ENDPOINT = os.getenv("CLOUD_ENDPOINT", "https://auris.skymlabs.com/api/frames")
-CLOUD_API_KEY = os.getenv("CLOUD_API_KEY", "")
-STORE_ID = os.getenv("STORE_ID", "default_store")
-CALIBRATION_START_STR = os.getenv("CALIBRATION_START", datetime.now(timezone.utc).isoformat())
-
 # Set up logging
 logger = logging.getLogger("AurisEdge")
 logger.setLevel(logging.INFO)
@@ -58,6 +50,25 @@ logger.addHandler(ch)
 fh = TimedRotatingFileHandler(LOG_PATH, when="midnight", interval=1, backupCount=7)
 fh.setFormatter(formatter)
 logger.addHandler(fh)
+
+logger.info(f"Loading .env from: {ENV_PATH}")
+
+# Load environment variables
+load_dotenv(ENV_PATH)
+
+# Force OpenCV to use TCP for RTSP stream capture to prevent packet loss and H264 decoding/bytestream errors
+os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "rtsp_transport;tcp"
+
+CLOUD_ENDPOINT = os.getenv("CLOUD_ENDPOINT", "https://auris.skymlabs.com/api/frames")
+CLOUD_API_KEY = os.getenv("CLOUD_API_KEY", "")
+STORE_ID = os.getenv("STORE_ID", "default_store")
+CALIBRATION_START_STR = os.getenv("CALIBRATION_START", datetime.now(timezone.utc).isoformat())
+
+logger.info(f"API Key loaded: {'YES' if CLOUD_API_KEY else 'NO - CHECK .env FILE'}")
+
+# Motion detection & crop extraction configuration
+MOTION_THRESHOLD = 16
+MIN_CONTOUR_AREA = 300
 
 _calibration_cache = None
 _calibration_checked = None
@@ -267,7 +278,7 @@ class CameraWorker(threading.Thread):
         
         self.cap = None
         self.running = False
-        self.bg_subtractor = cv2.createBackgroundSubtractorMOG2(history=500, varThreshold=50, detectShadows=False)
+        self.bg_subtractor = cv2.createBackgroundSubtractorMOG2(history=500, varThreshold=MOTION_THRESHOLD, detectShadows=False)
         self.frame_count = 0
         self.consecutive_failures = 0
 
@@ -351,7 +362,7 @@ class CameraWorker(threading.Thread):
         raw_rects = []
         for c in contours:
             area = cv2.contourArea(c)
-            if area < 800:
+            if area < MIN_CONTOUR_AREA:
                 continue # Ignore dust, insects, tiny movements
             
             x, y, w, h = cv2.boundingRect(c)
@@ -399,7 +410,7 @@ class CameraWorker(threading.Thread):
         crops_data.sort(key=lambda c: c["area"], reverse=True)
         
         # Filter out insignificant motion (background noise, dust, lighting changes)
-        crops_data = [c for c in crops_data if c["area"] > 500]
+        crops_data = [c for c in crops_data if c["area"] > MIN_CONTOUR_AREA]
         
         # Only send if at least one substantial crop exists
         if not crops_data:
@@ -454,9 +465,13 @@ class CameraWorker(threading.Thread):
                 
                 # Apply Background Subtraction
                 mask = self.bg_subtractor.apply(frame)
+                camera_id = self.name
+                motion_pixel_count = cv2.countNonZero(mask)
+                logger.info(f"[{camera_id}] Motion pixels: {motion_pixel_count} threshold: {MOTION_THRESHOLD}")
                 
                 # Extract crops
                 crops = self.extract_crops(frame, mask)
+                logger.info(f"[{camera_id}] Crops extracted: {len(crops)}")
                 
                 # Only construct and send payload if there is motion OR if we need to send full frames in calibration
                 full_frame_b64 = None
@@ -514,29 +529,100 @@ def _heartbeat_loop(store_id: str, cameras: List[str]):
         time.sleep(60)
 
 
+def fetch_server_config(endpoint: str, api_key: str) -> Optional[List[Dict[str, Any]]]:
+    """
+    Fetches the camera configuration from the server with retries.
+    Retries 3 times with 5s delay on failure (4 total attempts).
+    Returns the cameras list if successful, otherwise None.
+    """
+    base_url = endpoint.rsplit("/api/", 1)[0]
+    config_url = f"{base_url}/api/edge/config"
+    headers = {"X-API-Key": api_key}
+    
+    logger.info(f"Attempting to fetch camera config from server: {config_url}")
+    
+    for attempt in range(1, 5):
+        try:
+            resp = requests.get(config_url, headers=headers, timeout=10)
+            if resp.status_code == 200:
+                config_data = resp.json()
+                cameras = config_data.get("cameras", [])
+                logger.info("Successfully fetched camera config from server.")
+                return cameras
+            else:
+                logger.warning(f"Server returned status code {resp.status_code} on attempt {attempt}/4")
+        except Exception as e:
+            logger.warning(f"Error fetching server config on attempt {attempt}/4: {e}")
+            
+        if attempt < 4:
+            logger.info("Retrying in 5 seconds...")
+            time.sleep(5)
+            
+    logger.error("Failed to fetch camera config from server after retries.")
+    return None
+
+
 def main():
     logger.info("Initializing Auris Edge Service...")
     
     # Initialize the Uploader (handles HTTP and SQLite buffering)
     uploader = FrameUploader(endpoint=CLOUD_ENDPOINT, api_key=CLOUD_API_KEY, store_id=STORE_ID)
     
-    # Load cameras from config (fallback to webcam if missing)
-    try:
-        import sys
-        sys.path.append(os.path.join(BASE_DIR, "src"))
-        from config import CAMERAS
-    except ImportError:
-        logger.warning("Could not load /opt/auris/src/config.py. Defaulting to video simulation.")
-        CAMERAS = {
+    # Load cameras config
+    cameras_list = None
+    if CLOUD_API_KEY:
+        cameras_list = fetch_server_config(CLOUD_ENDPOINT, CLOUD_API_KEY)
+        
+    cameras_dict = {}
+    if not cameras_list:
+        # Check .env for CAM_x_URL first
+        i = 1
+        env_cameras = {}
+        while True:
+            url = os.getenv(f"CAM_{i}_URL")
+            if not url:
+                break
+            env_cameras[f"cam{i}"] = {"url": url, "fps": 2}
+            i += 1
+            
+        if env_cameras:
+            logger.info(f"Loaded {len(env_cameras)} cameras from .env variables")
+            cameras_dict = env_cameras
+        else:
+            logger.info("No server config or .env cameras found, using local config.py")
+            try:
+                import sys
+                src_path = os.path.join(BASE_DIR, "src")
+                if src_path not in sys.path:
+                    sys.path.append(src_path)
+                from config import CAMERAS
+                cameras_dict = CAMERAS
+            except ImportError:
+                logger.warning("Could not load local config.py. Defaulting to video simulation.")
+                cameras_dict = {
+                    "cam1": {"url": "videos/vid1.mp4", "fps": 2},
+                }
+    else:
+        logger.info(f"Loaded {len(cameras_list)} cameras from server config")
+        for cam in cameras_list:
+            cam_name = cam.get("camera_id")
+            url = cam.get("rtsp_url")
+            fps = cam.get("fps", 2)
+            if cam_name and url:
+                cameras_dict[cam_name] = {"url": url, "fps": fps}
+                
+    if not cameras_dict:
+        logger.warning("No cameras configured from server or local config. Defaulting to video simulation.")
+        cameras_dict = {
             "cam1": {"url": "videos/vid1.mp4", "fps": 2},
         }
         
     workers = []
     camera_names = []
 
-    for cam_name, cam_cfg in CAMERAS.items():
+    for cam_name, cam_cfg in cameras_dict.items():
         url = cam_cfg.get("url", 0)
-        fps = cam_cfg.get("fps", 5)
+        fps = cam_cfg.get("fps", 2)
         camera_names.append(cam_name)
         
         worker = CameraWorker(
@@ -568,6 +654,7 @@ def main():
             w.stop()
         for w in workers:
             w.join()
+
 
 if __name__ == "__main__":
     main()
