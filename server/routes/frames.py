@@ -41,6 +41,9 @@ trackers: Dict[str, Any] = {}
 _homography_cache: Dict[str, dict] = {}
 REID_ENABLED = os.getenv("REID_ENABLED", "false").lower() == "true"
 
+# Live snapshot store: {store_id_camera_id: {frame_b64, timestamp, people_now}}
+latest_frames: Dict[str, dict] = {}
+
 
 def get_tracker(store_id: str, camera_id: str):
     if not DeepSort:
@@ -119,6 +122,7 @@ class FramePayload(BaseModel):
 def run_inference_and_tracking(payload: FramePayload) -> Tuple[List, List, bool]:
     """Returns (deepsort_detections, crop_meta for training, fire_detected)."""
     if not MODEL:
+        logger.warning("YOLO model not loaded — skipping inference")
         return [], [], False
 
     deepsort_detections = []
@@ -126,15 +130,22 @@ def run_inference_and_tracking(payload: FramePayload) -> Tuple[List, List, bool]
     fire_detected = False
     W_orig, H_orig = payload.frame_resolution
 
-    for crop in payload.crops:
+    for i, crop in enumerate(payload.crops):
         try:
             img_data = base64.b64decode(crop.jpeg_b64)
             np_arr = np.frombuffer(img_data, np.uint8)
             crop_img = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
             if crop_img is None:
+                logger.warning(f"Crop {i}: failed to decode image")
                 continue
 
             crop_h, crop_w = crop_img.shape[:2]
+
+            # Skip crops that are too small for YOLO to process reliably
+            if crop_w < 64 or crop_h < 64:
+                logger.info(f"Crop {i}: skipping — too small ({crop_w}x{crop_h})")
+                continue
+
             cx_norm, cy_norm, cw_norm, ch_norm = crop.bbox
 
             if FIRE_MODEL:
@@ -142,33 +153,48 @@ def run_inference_and_tracking(payload: FramePayload) -> Tuple[List, List, bool]
                     if len(r.boxes) > 0:
                         fire_detected = True
 
-            results = MODEL(crop_img, conf=0.45, classes=[0], verbose=False)
+            # --- DEBUG PHASE: lower conf=0.15, no class filter, detect ALL objects ---
+            results = MODEL(crop_img, conf=0.15, verbose=False)
             max_conf = 0.0
+            crop_detections = []
             for r in results:
+                detected_classes = [MODEL.names[int(b.cls[0])] for b in r.boxes]
+                logger.info(
+                    f"Crop {i}: size=({crop_w}x{crop_h}), "
+                    f"detections={len(r.boxes)}, classes={detected_classes}"
+                )
+                if len(r.boxes) == 0:
+                    logger.info(f"Crop {i}: No detection in crop")
                 for box in r.boxes:
+                    cls_name = MODEL.names[int(box.cls[0])]
                     x1, y1, x2, y2 = box.xyxy[0].tolist()
                     conf = float(box.conf[0])
                     max_conf = max(max_conf, conf)
-                    nx1, ny1 = x1 / crop_w, y1 / crop_h
-                    nx2, ny2 = x2 / crop_w, y2 / crop_h
-                    ff_nx1 = cx_norm + (nx1 * cw_norm)
-                    ff_ny1 = cy_norm + (ny1 * ch_norm)
-                    ff_nw = (nx2 - nx1) * cw_norm
-                    ff_nh = (ny2 - ny1) * ch_norm
-                    abs_x = max(0, min(int(ff_nx1 * W_orig), W_orig - 1))
-                    abs_y = max(0, min(int(ff_ny1 * H_orig), H_orig - 1))
-                    abs_w = max(1, int(ff_nw * W_orig))
-                    abs_h = max(1, int(ff_nh * H_orig))
-                    if abs_x + abs_w > W_orig:
-                        abs_w = W_orig - abs_x
-                    if abs_y + abs_h > H_orig:
-                        abs_h = H_orig - abs_y
-                    deepsort_detections.append(([abs_x, abs_y, abs_w, abs_h], conf, "person"))
+
+                    # Only feed person detections into DeepSort tracker
+                    if cls_name == "person":
+                        nx1, ny1 = x1 / crop_w, y1 / crop_h
+                        nx2, ny2 = x2 / crop_w, y2 / crop_h
+                        ff_nx1 = cx_norm + (nx1 * cw_norm)
+                        ff_ny1 = cy_norm + (ny1 * ch_norm)
+                        ff_nw = (nx2 - nx1) * cw_norm
+                        ff_nh = (ny2 - ny1) * ch_norm
+                        abs_x = max(0, min(int(ff_nx1 * W_orig), W_orig - 1))
+                        abs_y = max(0, min(int(ff_ny1 * H_orig), H_orig - 1))
+                        abs_w = max(1, int(ff_nw * W_orig))
+                        abs_h = max(1, int(ff_nh * H_orig))
+                        if abs_x + abs_w > W_orig:
+                            abs_w = W_orig - abs_x
+                        if abs_y + abs_h > H_orig:
+                            abs_h = H_orig - abs_y
+                        deepsort_detections.append(([abs_x, abs_y, abs_w, abs_h], conf, "person"))
+                        crop_detections.append({"abs_bbox": [abs_x, abs_y, abs_w, abs_h], "conf": conf})
 
             crop_meta.append({
                 "jpeg_b64": crop.jpeg_b64,
                 "bbox": crop.bbox,
                 "max_conf": max_conf,
+                "detections": crop_detections,
             })
         except Exception as e:
             logger.warning("Crop error: %s", e)
@@ -209,7 +235,8 @@ async def execute_frame_inference_and_tracking(payload: FramePayload, api_key: s
 
         for meta in crop_meta:
             conf = meta["max_conf"]
-            if 0 < conf < 0.50:
+            # Only save hard cases where YOLO found SOMETHING but was uncertain (0.15–0.50)
+            if 0.15 <= conf < 0.50:
                 await save_hard_case(s_id, c_id, meta["jpeg_b64"], conf, payload.frame_id)
             elif conf > 0.85:
                 await save_pseudo_label(s_id, c_id, meta["jpeg_b64"], meta["bbox"], conf)
@@ -341,8 +368,46 @@ async def execute_frame_inference_and_tracking(payload: FramePayload, api_key: s
             final_detections.append(det)
 
         people_now = len(final_detections)
+        logger.info(
+            f"Frame {payload.frame_id} from {c_id}: "
+            f"{len(payload.crops)} crops received, {people_now} people detected"
+        )
         if people_now > max_capacity:
             await dispatch_overcrowding_alert(s_id, people_now, max_capacity)
+
+        # Store latest snapshot for live view (draw bounding boxes if full frame available)
+        if payload.full_frame_b64:
+            try:
+                frame_key = f"{s_id}_{c_id}"
+                annotated_b64 = payload.full_frame_b64
+                if final_detections:
+                    ffd = base64.b64decode(payload.full_frame_b64)
+                    ff_arr = np.frombuffer(ffd, np.uint8)
+                    ff_img = cv2.imdecode(ff_arr, cv2.IMREAD_COLOR)
+                    if ff_img is not None:
+                        fh, fw = ff_img.shape[:2]
+                        for det in final_detections:
+                            bn = det.get("bbox_normalised", [])
+                            if len(bn) == 4:
+                                bx1 = int(bn[0] * fw)
+                                by1 = int(bn[1] * fh)
+                                bx2 = int(bn[2] * fw)
+                                by2 = int(bn[3] * fh)
+                                cv2.rectangle(ff_img, (bx1, by1), (bx2, by2), (0, 255, 80), 2)
+                                label = f"Person #{det.get('track_id', '?')}"
+                                cv2.putText(ff_img, label, (bx1, max(by1 - 6, 10)),
+                                            cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 80), 1)
+                        _, buf = cv2.imencode(".jpg", ff_img, [cv2.IMWRITE_JPEG_QUALITY, 80])
+                        annotated_b64 = base64.b64encode(buf).decode("utf-8")
+                latest_frames[frame_key] = {
+                    "frame_b64": annotated_b64,
+                    "timestamp": payload.timestamp,
+                    "people_now": people_now,
+                    "camera_id": c_id,
+                    "store_id": s_id,
+                }
+            except Exception as snap_err:
+                logger.warning(f"Snapshot annotation error: {snap_err}")
 
         for tid in list(track_positions[s_id][c_id].keys()):
             if tid not in current_ids:
@@ -475,3 +540,25 @@ async def process_frame(request: Request, payload: FramePayload):
     except Exception as e:
         logger.error("Frame submit error: %s", e)
         return {"status": "error", "message": str(e)}
+
+
+@router.get("/api/live/snapshot")
+async def get_live_snapshot(request: Request, store_id: str, camera_id: str):
+    """Returns the latest annotated frame for a given camera. Auth: X-Admin-Key."""
+    from db import ADMIN_KEY
+    admin_key = request.headers.get("X-Admin-Key", "")
+    if not ADMIN_KEY or admin_key != ADMIN_KEY:
+        raise HTTPException(status_code=403, detail="Invalid admin key")
+
+    frame_key = f"{store_id}_{camera_id}"
+    snapshot = latest_frames.get(frame_key)
+    if not snapshot:
+        raise HTTPException(status_code=404, detail="No snapshot available yet for this camera")
+
+    return {
+        "frame_b64": snapshot["frame_b64"],
+        "timestamp": snapshot["timestamp"],
+        "people_now": snapshot["people_now"],
+        "camera_id": camera_id,
+        "store_id": store_id,
+    }

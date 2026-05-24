@@ -19,6 +19,9 @@ export default function FactoryDataScreen({ store }) {
   const [bottleneckData, setBottleneckData] = useState(null);
   const [patternsData, setPatternsData] = useState(null);
 
+  // Detection health warning
+  const [showDetectionWarning, setShowDetectionWarning] = useState(false);
+
   // Accordion open states
   const [expanded, setExpanded] = useState({ deadtime: false, bottleneck: false, patterns: false });
 
@@ -45,6 +48,17 @@ export default function FactoryDataScreen({ store }) {
       setDeadtimeData(dead);
       setBottleneckData(bottle);
       setPatternsData(patt);
+
+      // Detection health check: if productive hours is 0 during business hours, warn
+      const now = new Date();
+      const hourNow = now.getHours();
+      const isShiftHours = hourNow >= 6 && hourNow <= 22; // 6AM–10PM
+      const productiveHours = dead?.summary?.productive_hours_total;
+      if (isShiftHours && (productiveHours === 0 || productiveHours === undefined || productiveHours === null)) {
+        setShowDetectionWarning(true);
+      } else {
+        setShowDetectionWarning(false);
+      }
     } catch (e) {
       console.log("Telemetry fetch error:", e.message);
       setError("Could not load — pull to refresh");
@@ -98,6 +112,15 @@ export default function FactoryDataScreen({ store }) {
         </View>
       ) : (
         <View style={styles.cardsStack}>
+
+          {/* Detection Warning Banner */}
+          {showDetectionWarning && (
+            <View style={styles.detectionWarningBanner}>
+              <Text style={styles.detectionWarningText}>
+                ⚠️ Camera detection may not be working correctly.{"\n"}Contact support: support@skymlabs.com
+              </Text>
+            </View>
+          )}
           
           {/* DEAD TIME CARD */}
           <TouchableOpacity style={styles.card} onPress={() => toggleExpand("deadtime")} activeOpacity={0.95}>
@@ -359,4 +382,19 @@ const styles = StyleSheet.create({
   emptyText: { fontSize: 13, color: "#9CA3AF", textAlign: "center", paddingVertical: 12 },
   emptyCacheContainer: { padding: 12, alignItems: "center" },
   learningSub: { fontSize: 13, color: "#9CA3AF", fontStyle: "italic", textAlign: "center" },
+  detectionWarningBanner: {
+    backgroundColor: "#FEF3C7",
+    borderWidth: 1,
+    borderColor: "#F59E0B",
+    borderRadius: 10,
+    padding: 14,
+    marginBottom: 4,
+  },
+  detectionWarningText: {
+    fontSize: 13,
+    fontWeight: "600",
+    color: "#92400E",
+    textAlign: "center",
+    lineHeight: 20,
+  },
 });

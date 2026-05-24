@@ -1086,6 +1086,32 @@ const ClientsPage = ({
                     </div>
                   )}
 
+                  {/* Live View Section (Factory Only) */}
+                  {selectedClientData?.plan === 'FACTORY' && (
+                    <div className="border border-[#E5E7EB] rounded-lg p-5 bg-white space-y-4">
+                      <div className="flex items-center gap-2 border-b border-[#E5E7EB] pb-2">
+                        <h3 className="text-xs font-bold text-[#111827] uppercase tracking-widest">Live View</h3>
+                        <span className="text-xs text-[#CA8A04] font-medium bg-amber-50 border border-amber-200 px-2 py-0.5 rounded-full">Live · 3s refresh</span>
+                      </div>
+                      {edgeCamerasLoading ? (
+                        <div className="text-xs text-[#6B7280] italic">Loading cameras...</div>
+                      ) : edgeCameras.length === 0 ? (
+                        <div className="text-xs text-[#6B7280] italic">No cameras configured.</div>
+                      ) : (
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                          {edgeCameras.map((cam: any) => (
+                            <LiveCameraView
+                              key={cam.camera_id}
+                              storeId={selectedClient || ''}
+                              cameraId={cam.camera_id}
+                              cameraLabel={cam.label || cam.camera_id}
+                            />
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )}
+
                   {/* Configuration Shifts & Wages (Factory Only) */}
                   {selectedClientData?.plan === 'FACTORY' && (
                     <div className="border border-[#E5E7EB] rounded-lg p-5 bg-white space-y-4">
@@ -1846,10 +1872,81 @@ const MappingPage = ({ storeId }: { storeId: string }) => {
   );
 };
 
+// --- LIVE CAMERA VIEW COMPONENT ---
+const LiveCameraView = ({ storeId, cameraId, cameraLabel }: { storeId: string; cameraId: string; cameraLabel: string }) => {
+  const [snapshot, setSnapshot] = useState<{ frame_b64: string; timestamp: string; people_now: number } | null>(null);
+  const [noFrame, setNoFrame] = useState(false);
+  const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  const fetchSnapshot = async () => {
+    try {
+      const res = await fetch(
+        `${API_BASE}/api/live/snapshot?store_id=${encodeURIComponent(storeId)}&camera_id=${encodeURIComponent(cameraId)}`,
+        { headers: { 'X-Admin-Key': ADMIN_KEY } }
+      );
+      if (res.ok) {
+        const data = await res.json();
+        setSnapshot(data);
+        setNoFrame(false);
+      } else {
+        setNoFrame(true);
+      }
+    } catch {
+      setNoFrame(true);
+    }
+  };
+
+  useEffect(() => {
+    fetchSnapshot();
+    intervalRef.current = setInterval(fetchSnapshot, 3000);
+    return () => {
+      if (intervalRef.current) clearInterval(intervalRef.current);
+    };
+  }, [storeId, cameraId]);
+
+  const imgSrc = snapshot?.frame_b64
+    ? (snapshot.frame_b64.startsWith('data:') ? snapshot.frame_b64 : `data:image/jpeg;base64,${snapshot.frame_b64}`)
+    : null;
+
+  const lastUpdated = snapshot?.timestamp
+    ? new Date(snapshot.timestamp).toLocaleTimeString()
+    : null;
+
+  return (
+    <div className="border border-[#E5E7EB] rounded-lg overflow-hidden bg-[#0d1117] relative" style={{ minHeight: 180 }}>
+      {imgSrc ? (
+        <img src={imgSrc} className="w-full h-full object-cover" style={{ minHeight: 180 }} draggable={false} />
+      ) : (
+        <div className="flex flex-col items-center justify-center" style={{ minHeight: 180 }}>
+          <Video className="w-8 h-8 text-gray-600 mb-2" />
+          <span className="text-xs text-gray-500 font-mono">
+            {noFrame ? 'No frames received yet' : 'Connecting...'}
+          </span>
+        </div>
+      )}
+
+      {/* Camera label overlay */}
+      <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/80 to-transparent px-3 py-2">
+        <div className="flex items-center justify-between">
+          <span className="text-xs font-mono text-white font-semibold">{cameraLabel} · {cameraId}</span>
+          {snapshot && (
+            <span className="text-xs font-bold text-emerald-400">
+              👤 {snapshot.people_now} detected
+            </span>
+          )}
+        </div>
+        {lastUpdated && (
+          <span className="text-[10px] text-gray-400 font-mono">Updated {lastUpdated}</span>
+        )}
+      </div>
+    </div>
+  );
+};
+
 // --- CALIBRATION TAB ---
 const CalibrationTab = ({ storeId, password }: { storeId: string; password?: string }) => {
     const [points, setPoints] = useState<any[]>([]);
-    const [imgUrl, setImgUrl] = useState('https://picsum.photos/seed/calibrate/1200/800');
+    const [imgUrl, setImgUrl] = useState<string | null>(null);
     const [cameraId, setCameraId] = useState('');
     const [calibMsg, setCalibMsg] = useState('');
     const [cameras, setCameras] = useState<any[]>([]);
@@ -1893,12 +1990,38 @@ const CalibrationTab = ({ storeId, password }: { storeId: string; password?: str
           const data = await res.json();
           if (data && data.full_frame_b64) {
             setImgUrl(data.full_frame_b64.startsWith('data:') ? data.full_frame_b64 : `data:image/jpeg;base64,${data.full_frame_b64}`);
+          } else {
+            // Try live snapshot as fallback
+            const snapRes = await fetch(`${API_BASE}/api/live/snapshot?store_id=${storeId}&camera_id=${cameraId}`, {
+              headers: { 'X-Admin-Key': ADMIN_KEY }
+            });
+            if (snapRes.ok) {
+              const snapData = await snapRes.json();
+              if (snapData?.frame_b64) {
+                setImgUrl(snapData.frame_b64.startsWith('data:') ? snapData.frame_b64 : `data:image/jpeg;base64,${snapData.frame_b64}`);
+              } else {
+                setImgUrl(null);
+              }
+            } else {
+              setImgUrl(null);
+            }
           }
         } else {
-          setImgUrl('https://picsum.photos/seed/calibrate/1200/800');
+          // Try live snapshot as fallback when calibration snapshot fails
+          try {
+            const snapRes = await fetch(`${API_BASE}/api/live/snapshot?store_id=${storeId}&camera_id=${cameraId}`, {
+              headers: { 'X-Admin-Key': ADMIN_KEY }
+            });
+            if (snapRes.ok) {
+              const snapData = await snapRes.json();
+              if (snapData?.frame_b64) {
+                setImgUrl(snapData.frame_b64.startsWith('data:') ? snapData.frame_b64 : `data:image/jpeg;base64,${snapData.frame_b64}`);
+              } else { setImgUrl(null); }
+            } else { setImgUrl(null); }
+          } catch { setImgUrl(null); }
         }
       } catch (e) {
-        setImgUrl('https://picsum.photos/seed/calibrate/1200/800');
+        setImgUrl(null);
       }
     };
 
@@ -2047,7 +2170,15 @@ const CalibrationTab = ({ storeId, password }: { storeId: string; password?: str
           {/* Viewport canvas column */}
           <div className="flex-1 border border-[#E5E7EB] rounded-lg overflow-hidden bg-gray-50 relative flex items-center justify-center cursor-crosshair">
             <div className="relative w-full h-full" onClick={handleCanvasClick}>
-              <img src={imgUrl} className="w-full h-full object-cover" draggable={false} referrerPolicy="no-referrer" />
+              {imgUrl ? (
+                <img src={imgUrl} className="w-full h-full object-cover" draggable={false} />
+              ) : (
+                <div className="w-full h-full flex flex-col items-center justify-center bg-[#1a1a2e]" style={{ minHeight: 320 }}>
+                  <Camera className="w-10 h-10 text-gray-600 mb-3" />
+                  <span className="text-sm text-gray-500 font-mono">No camera feed available yet</span>
+                  <span className="text-xs text-gray-600 mt-1">Frames will appear once the edge device connects</span>
+                </div>
+              )}
               
               {/* Overlay point markers */}
               {points.map((p, i) => (
