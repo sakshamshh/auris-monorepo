@@ -338,85 +338,146 @@ class CameraWorker(threading.Thread):
         return True
 
     def merge_overlapping_crops(self, rects: List[Tuple[int, int, int, int]]) -> List[Tuple[int, int, int, int]]:
-        """Merges overlapping bounding boxes using cv2.groupRectangles."""
+        """
+        Merges bounding boxes that are within 100px of each other into a single
+        union bounding box. This prevents sending many tiny motion blobs when a
+        single person is the source.
+
+        Iterates until no further merges are possible (handles chain merges).
+        """
         if not rects:
             return []
-        
-        # groupRectangles requires a list of rects and a weights array.
-        # We duplicate rects to force grouping even if it's a single isolated rect.
-        rects_list = list(rects) + list(rects)
-        merged, _ = cv2.groupRectangles(rects_list, 1, 0.2)
-        
-        if merged is None or len(merged) == 0:
-            return []
-            
-        return [tuple(r) for r in merged]
 
-    def extract_crops(self, frame: np.ndarray, mask: np.ndarray) -> List[Dict[str, Any]]:
-        """Finds motion contours, extracts padded crops, and returns payload dictionaries."""
+        PROXIMITY = 100  # px — merge if this close on any axis
+
+        def expand(r: Tuple[int, int, int, int]) -> Tuple[int, int, int, int]:
+            """Expand rect by PROXIMITY for overlap testing."""
+            x, y, w, h = r
+            return (x - PROXIMITY, y - PROXIMITY, w + 2 * PROXIMITY, h + 2 * PROXIMITY)
+
+        def overlaps(a: Tuple[int, int, int, int], b: Tuple[int, int, int, int]) -> bool:
+            """True if expanded version of a overlaps b."""
+            ax, ay, aw, ah = expand(a)
+            bx, by, bw, bh = b
+            return ax < bx + bw and ax + aw > bx and ay < by + bh and ay + ah > by
+
+        def union(a: Tuple[int, int, int, int], b: Tuple[int, int, int, int]) -> Tuple[int, int, int, int]:
+            ax1, ay1, aw, ah = a
+            bx1, by1, bw, bh = b
+            x1 = min(ax1, bx1)
+            y1 = min(ay1, by1)
+            x2 = max(ax1 + aw, bx1 + bw)
+            y2 = max(ay1 + ah, by1 + bh)
+            return (x1, y1, x2 - x1, y2 - y1)
+
+        merged = list(rects)
+        changed = True
+        while changed:
+            changed = False
+            result = []
+            used = [False] * len(merged)
+            for i in range(len(merged)):
+                if used[i]:
+                    continue
+                cur = merged[i]
+                for j in range(i + 1, len(merged)):
+                    if used[j]:
+                        continue
+                    if overlaps(cur, merged[j]):
+                        cur = union(cur, merged[j])
+                        used[j] = True
+                        changed = True
+                result.append(cur)
+            merged = result
+
+        return merged
+
+    def extract_crops(self, frame: np.ndarray, mask: np.ndarray, camera_id: str = "") -> List[Dict[str, Any]]:
+        """Finds motion contours, merges nearby ones, extracts padded crops, and returns payload dicts."""
         H, W = frame.shape[:2]
-        
+
+        # Minimum crop dimensions YOLO can usefully process for person detection
+        MIN_CROP_W, MIN_CROP_H = 200, 200
+        MAX_CROP_DIM = 640  # resize if larger
+        PADDING = 50        # px to expand bbox on all sides
+
         # Find contours in the motion mask
         contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-        
-        raw_rects = []
+
+        raw_rects: List[Tuple[int, int, int, int]] = []
         for c in contours:
             area = cv2.contourArea(c)
             if area < MIN_CONTOUR_AREA:
-                continue # Ignore dust, insects, tiny movements
-            
+                continue  # Ignore dust, insects, tiny movements
             x, y, w, h = cv2.boundingRect(c)
             raw_rects.append((x, y, w, h))
-            
-        # Merge overlapping rectangles (e.g. people walking close to each other)
+
+        if not raw_rects:
+            return []
+
+        # Merge nearby bounding boxes (within 100px) into a single person-region
         merged_rects = self.merge_overlapping_crops(raw_rects)
-        
+
         crops_data = []
-        for (x, y, w, h) in merged_rects:
+        for i, (x, y, w, h) in enumerate(merged_rects):
             x, y, w, h = int(x), int(y), int(w), int(h)
-            area = w * h
-            
-            # Add 30px padding
-            px1 = max(0, x - 30)
-            py1 = max(0, y - 30)
-            px2 = min(W, x + w + 30)
-            py2 = min(H, y + h + 30)
-            
+
+            # Add 50px padding on all sides, clipped to frame boundaries
+            px1 = max(0, x - PADDING)
+            py1 = max(0, y - PADDING)
+            px2 = min(W, x + w + PADDING)
+            py2 = min(H, y + h + PADDING)
+
+            crop_w = px2 - px1
+            crop_h = py2 - py1
+
+            # Skip crops that are still too small for YOLO to detect a person
+            if crop_w < MIN_CROP_W or crop_h < MIN_CROP_H:
+                logger.info(
+                    f"[{camera_id}] Skipping crop {i}: {crop_w}x{crop_h}px — "
+                    f"below minimum {MIN_CROP_W}x{MIN_CROP_H}px"
+                )
+                continue
+
             crop_img = frame[py1:py2, px1:px2]
-            
-            # Resize crop if larger than 320x320
+
+            # Resize crop if larger than 640x640, preserving aspect ratio
             ch, cw = crop_img.shape[:2]
-            if ch > 320 or cw > 320:
-                scale = 320 / max(ch, cw)
-                crop_img = cv2.resize(crop_img, (int(cw * scale), int(ch * scale)), interpolation=cv2.INTER_AREA)
-                
-            # JPEG Encode (quality=60)
-            encode_param = [int(cv2.IMWRITE_JPEG_QUALITY), 60]
+            if cw > MAX_CROP_DIM or ch > MAX_CROP_DIM:
+                scale = MAX_CROP_DIM / max(ch, cw)
+                crop_img = cv2.resize(
+                    crop_img,
+                    (int(cw * scale), int(ch * scale)),
+                    interpolation=cv2.INTER_AREA
+                )
+                ch, cw = crop_img.shape[:2]
+
+            logger.info(f"[{camera_id}] Sending crop {i}: {cw}x{ch}px")
+
+            # JPEG encode at quality=75 (better than 60 for detection accuracy)
+            encode_param = [int(cv2.IMWRITE_JPEG_QUALITY), 75]
             success, encoded_img = cv2.imencode('.jpg', crop_img, encode_param)
-            
+
             if success:
                 b64_str = base64.b64encode(encoded_img).decode('utf-8')
-                
-                # Normalise bbox coords 0-1
-                norm_bbox = [float(px1/W), float(py1/H), float((px2-px1)/W), float((py2-py1)/H)]
-                
+
+                # Normalised bbox coords 0–1 (relative to original frame)
+                norm_bbox = [
+                    float(px1 / W),
+                    float(py1 / H),
+                    float((px2 - px1) / W),
+                    float((py2 - py1) / H)
+                ]
+
                 crops_data.append({
                     "bbox": norm_bbox,
                     "jpeg_b64": b64_str,
-                    "area": int(area)
+                    "area": int(crop_w * crop_h)
                 })
-                
-        # Maximum 20 crops (take largest by area)
+
+        # Sort by area descending (largest = most likely a full person), cap at 10
         crops_data.sort(key=lambda c: c["area"], reverse=True)
-        
-        # Filter out insignificant motion (background noise, dust, lighting changes)
-        crops_data = [c for c in crops_data if c["area"] > MIN_CONTOUR_AREA]
-        
-        # Only send if at least one substantial crop exists
-        if not crops_data:
-            return []
-            
-        return crops_data[:20]
+        return crops_data[:10]
 
     def stop(self):
         self.running = False
@@ -469,14 +530,16 @@ class CameraWorker(threading.Thread):
                 motion_pixel_count = cv2.countNonZero(mask)
                 logger.info(f"[{camera_id}] Motion pixels: {motion_pixel_count} threshold: {MOTION_THRESHOLD}")
                 
-                # Extract crops
-                crops = self.extract_crops(frame, mask)
+                # Extract crops (pass camera_id for logging)
+                crops = self.extract_crops(frame, mask, camera_id=camera_id)
                 logger.info(f"[{camera_id}] Crops extracted: {len(crops)}")
                 
                 # Only construct and send payload if there is motion OR if we need to send full frames in calibration
                 full_frame_b64 = None
-                # Only send full frame every 10th frame in calibration mode to save bandwidth (~50KB/frame)
-                if calibration_mode and self.frame_count % 10 == 0:
+                # Send full frame every 10th frame in ALL modes:
+                #   - calibration: needed for QR / homography
+                #   - normal: needed for live snapshot viewer (GET /api/live/snapshot)
+                if self.frame_count % 10 == 0:
                     ff_resized = cv2.resize(frame, (640, 480))
                     _, ff_enc = cv2.imencode('.jpg', ff_resized, [int(cv2.IMWRITE_JPEG_QUALITY), 60])
                     full_frame_b64 = base64.b64encode(ff_enc).decode('utf-8')
