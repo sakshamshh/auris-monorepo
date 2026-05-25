@@ -250,9 +250,9 @@ async def execute_frame_inference_and_tracking(payload: FramePayload, api_key: s
                 if not track.is_confirmed():
                     continue
                 ltrb = track.to_ltrb()
-                nx1, ny1 = ltrb[0] / W_orig, ltrb[1] / H_orig
-                nx2, ny2 = ltrb[2] / W_orig, ltrb[3] / H_orig
-                cx, cy = (nx1 + nx2) / 2.0, (ny1 + ny2) / 2.0
+                nx1, ny1 = float(ltrb[0]) / W_orig, float(ltrb[1]) / H_orig
+                nx2, ny2 = float(ltrb[2]) / W_orig, float(ltrb[3]) / H_orig
+                cx, cy = float(nx1 + nx2) / 2.0, float(ny1 + ny2) / 2.0
                 active_tracks.append({
                     "track_id": track.track_id,
                     "centroid": (cx, cy),
