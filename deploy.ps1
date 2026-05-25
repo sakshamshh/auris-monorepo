@@ -1,4 +1,4 @@
-﻿# deploy.ps1 — run from monorepo root
+# deploy.ps1 — run from monorepo root
 # Usage: .\deploy.ps1
 
 Write-Host "Deploying Auris..." -ForegroundColor Cyan
@@ -19,6 +19,9 @@ scp server/routes/*.py retailiq-server:/home/retailiq-key/auris-server/routes/
 scp server/aggregator/*.py retailiq-server:/home/retailiq-key/auris-server/aggregator/
 scp server/main.py retailiq-server:/home/retailiq-key/auris-server/
 scp server/db.py retailiq-server:/home/retailiq-key/auris-server/
+scp edge/src/edge_worker.py retailiq-server:/home/retailiq-key/auris-server/
+scp edge/provision.py retailiq-server:/home/retailiq-key/auris-server/
+scp edge/requirements.txt retailiq-server:/home/retailiq-key/auris-server/
 ssh retailiq-server "sudo systemctl restart auris"
 Write-Host "Backend deployed." -ForegroundColor Green
 

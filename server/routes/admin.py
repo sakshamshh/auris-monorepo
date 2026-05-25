@@ -1,4 +1,5 @@
 import os
+import logging
 from typing import Optional
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import PlainTextResponse
@@ -6,6 +7,7 @@ from pydantic import BaseModel
 
 from db import db, hash_password, generate_api_key, ADMIN_KEY
 
+logger = logging.getLogger("AurisCloud.admin")
 router = APIRouter()
 
 
@@ -30,9 +32,49 @@ async def get_install_script():
                 return content
             except Exception:
                 continue
-                
     raise HTTPException(status_code=404, detail="Installation script not found on server")
 
+
+def serve_edge_file(filename: str, subdirs: list) -> str:
+    BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    
+    paths_to_try = [
+        f"/home/retailiq-key/auris-server/{filename}",
+        os.path.join(BASE_DIR, filename),
+        os.path.join(BASE_DIR, *subdirs, filename),
+        os.path.join(BASE_DIR, "..", *subdirs, filename)
+    ]
+    
+    for path in paths_to_try:
+        if os.path.exists(path):
+            try:
+                with open(path, "r", encoding="utf-8") as f:
+                    content = f.read()
+                logger.info(f"Serving edge file from: {path}")
+                return content
+            except Exception as e:
+                logger.error(f"Failed to read edge file at {path}: {e}")
+                continue
+                
+    # If none exist, return 500 with a clear error message
+    msg = f"Could not find {filename} on server. Tried paths: {', '.join(paths_to_try)}"
+    logger.error(msg)
+    raise HTTPException(status_code=500, detail=msg)
+
+
+@router.get("/edge/download/edge_worker", response_class=PlainTextResponse)
+async def download_edge_worker():
+    return serve_edge_file("edge_worker.py", ["edge", "src"])
+
+
+@router.get("/edge/download/provision", response_class=PlainTextResponse)
+async def download_provision():
+    return serve_edge_file("provision.py", ["edge"])
+
+
+@router.get("/edge/download/requirements", response_class=PlainTextResponse)
+async def download_requirements():
+    return serve_edge_file("requirements.txt", ["edge"])
 
 
 def require_admin(request: Request):
