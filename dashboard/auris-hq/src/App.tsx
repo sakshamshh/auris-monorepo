@@ -5,10 +5,6 @@
 
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { 
-  motion, 
-  AnimatePresence
-} from 'motion/react';
-import { 
   LayoutDashboard, 
   Map as MapIcon, 
   Settings, 
@@ -59,7 +55,7 @@ const API_BASE = IS_DEV ? 'http://localhost:8000' : 'https://auris.skymlabs.com'
 const ADMIN_KEY = 'dcd62cb40e5fa0870d73c79fbd521d05';
 
 // --- TYPES ---
-type Tab = 'mission' | 'dashboard' | 'mapping' | 'calibration' | 'report' | 'training' | 'management' | 'factory' | 'factory_analytics';
+type Tab = 'overview' | 'management' | 'mapping' | 'calibration' | 'report' | 'training' | 'factory' | 'factory_analytics';
 
 interface Store {
   store_id: string;
@@ -81,39 +77,110 @@ interface Track {
   warning?: boolean;
 }
 
-// --- COMPONENTS ---
-
-// 1. UI PRIMITIVES
-const GlassCard = ({ children, className = '', glow = false, onClick }: any) => (
-  <div 
-    onClick={onClick}
-    className={`glass rounded-2xl relative overflow-hidden backdrop-blur-xl border border-auris-border bg-auris-card ${glow ? 'shadow-[0_0_20px_rgba(0,255,255,0.1)]' : ''} ${onClick ? 'cursor-pointer hover:bg-white/[0.04] transition-colors' : ''} ${className}`}
-  >
-    <div className="scanline" />
-    {children}
-  </div>
-);
-
-const MetricCard = ({ label, value, unit, trend, icon, cyan = false }: any) => (
-  <GlassCard className="p-4 min-w-[160px]">
-    <div className="flex items-center gap-2 mb-2">
-      {icon || <TrendingUp className={`w-3 h-3 ${cyan ? 'text-auris-cyan' : 'text-white/30'}`} />}
-      <span className="text-[9px] uppercase tracking-widest text-white/40">{label}</span>
-    </div>
-    <div className="flex items-baseline gap-1">
-      <span className={`text-2xl font-display font-light ${cyan ? 'text-auris-cyan' : 'text-white'}`}>{value}</span>
-      <span className="text-[9px] font-mono opacity-40">{unit}</span>
-    </div>
-    {trend && (
-      <div className={`mt-1 text-[9px] font-mono ${trend.startsWith('+') ? 'text-auris-cyan' : 'text-auris-orange'}`}>
-        {trend} SINCE LAST EPOCH
+// --- ERROR BOUNDARY ---
+class ErrorBoundary extends React.Component<{ children: React.ReactNode }, { hasError: boolean, error: any }> {
+  state = { hasError: false, error: null };
+  static getDerivedStateFromError(error: any) { return { hasError: true, error }; }
+  render() {
+    if (this.state.hasError) return (
+      <div style={{padding:32,color:'#DC2626'}}>
+        Analytics failed to load. Try selecting a different client.
       </div>
-    )}
-  </GlassCard>
-);
+    );
+    return this.props.children;
+  }
+}
 
-/// 2. TAB: MISSION CONTROL
-const GlobalHealthDashboard = ({ 
+// --- RETAIL ANALYTICS ---
+const RetailAnalytics = ({ storeId }: { storeId: string }) => {
+  const [data, setData] = useState<{ today_total: number; peak_hour: string; seven_day_total: number } | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    const fetchFootfall = async () => {
+      setLoading(true);
+      setError('');
+      try {
+        const res = await fetch(`${API_BASE}/api/retail/footfall`, {
+          headers: {
+            'X-Store-ID': storeId,
+            'X-Password': 'auris123'
+          }
+        });
+        const historyRes = await fetch(`${API_BASE}/api/retail/footfall/history`, {
+          headers: {
+            'X-Store-ID': storeId,
+            'X-Password': 'auris123'
+          }
+        });
+
+        if (!res.ok) throw new Error("Failed to load footfall metrics");
+        const footfallData = await res.json();
+        
+        let sevenDayTotal = 0;
+        if (historyRes.ok) {
+          const historyData = await historyRes.json();
+          const daily = historyData.daily || [];
+          const last7 = daily.slice(-7);
+          sevenDayTotal = last7.reduce((sum: number, day: any) => sum + (day.visitors || 0), 0);
+        } else {
+          sevenDayTotal = footfallData.today_total * 7;
+        }
+
+        setData({
+          today_total: footfallData.today_total,
+          peak_hour: footfallData.peak_hour,
+          seven_day_total: sevenDayTotal
+        });
+      } catch (err) {
+        console.error(err);
+        setError("No retail data available yet");
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    if (storeId) {
+      fetchFootfall();
+    }
+  }, [storeId]);
+
+  if (loading) {
+    return <div className="p-8 text-sm text-[#6B7280]">Loading retail analytics...</div>;
+  }
+
+  if (error || !data) {
+    return (
+      <div className="p-8 text-sm text-[#DC2626] font-medium border border-red-200 bg-red-50 rounded-lg">
+        {error || "No retail data available yet"}
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-4">
+      <h3 className="text-xs font-bold text-[#111827] uppercase tracking-widest border-b border-[#E5E7EB] pb-2">Footfall Analytics</h3>
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-6">
+        <div className="p-5 border border-[#E5E7EB] rounded-lg bg-white shadow-sm">
+          <span className="text-xs font-semibold text-[#6B7280] uppercase tracking-wider block">Today's Visitors</span>
+          <span className="text-3xl font-bold text-[#1A3C5E] mt-2 block">{data.today_total}</span>
+        </div>
+        <div className="p-5 border border-[#E5E7EB] rounded-lg bg-white shadow-sm">
+          <span className="text-xs font-semibold text-[#6B7280] uppercase tracking-wider block">Peak Hour</span>
+          <span className="text-2xl font-bold text-gray-800 mt-2 block">{data.peak_hour}</span>
+        </div>
+        <div className="p-5 border border-[#E5E7EB] rounded-lg bg-white shadow-sm">
+          <span className="text-xs font-semibold text-[#6B7280] uppercase tracking-wider block">7-Day Total</span>
+          <span className="text-3xl font-bold text-gray-800 mt-2 block">{data.seven_day_total}</span>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+// --- OVERVIEW PAGE (replaces MissionControl) ---
+const OverviewPage = ({ 
   onSelectStore, 
   onSelectRegistryClient 
 }: { 
@@ -219,1188 +286,109 @@ const GlobalHealthDashboard = ({
   };
 
   const totalClients = clients.length;
-  const greenCount = clients.filter(c => c.statusColor === 'green').length;
-  const amberCount = clients.filter(c => c.statusColor === 'amber').length;
-  const redCount = clients.filter(c => c.statusColor === 'red').length;
+  const liveCount = clients.filter(c => c.statusColor === 'green').length;
+  const pendingCount = clients.filter(c => c.status === 'pending' || c.statusColor === 'amber').length;
+  const offlineCount = clients.filter(c => c.statusColor === 'red' || (c.statusColor === 'gray' && c.status !== 'pending')).length;
 
   return (
-    <div className="h-full flex flex-col p-4 md:p-8 overflow-y-auto custom-scrollbar bg-auris-bg">
-      <header className="flex flex-col md:flex-row justify-between items-start md:items-end mb-8 md:mb-12 gap-6 md:gap-4 border-b border-white/5 pb-6">
+    <div className="h-full flex flex-col bg-white">
+      <header className="flex justify-between items-center mb-8 pb-4 border-b border-[#E5E7EB]">
         <div>
-          <h2 className="text-[10px] uppercase tracking-[0.4em] font-mono text-auris-cyan">AURIS GLOBAL OVERWATCH</h2>
-          <h1 className="text-4xl font-display font-light mt-2 tracking-tight uppercase">Mission Control</h1>
+          <h1 className="text-2xl font-bold text-[#111827]">Overview</h1>
+          <p className="text-sm text-[#6B7280]">Real-time system telemetry and client directories.</p>
         </div>
-        <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-black/40 border border-white/5 font-mono text-[9px] text-white/50 tracking-wider">
-          <RefreshCw className="w-3 h-3 animate-spin text-auris-cyan mr-1" />
-          Refreshing in <span className="text-auris-cyan font-bold">{timeLeft}s</span>
+        <div className="flex items-center gap-2 px-3 py-1.5 rounded border border-[#E5E7EB] text-xs text-[#6B7280] font-medium bg-[#F8F9FA]">
+          <RefreshCw className="w-3.5 h-3.5 animate-spin text-[#1A3C5E]" />
+          Refreshes in <span className="text-[#1A3C5E] font-bold">{timeLeft}s</span>
         </div>
       </header>
 
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
-        <GlassCard className="p-4 flex flex-col">
-          <span className="text-[8px] font-mono uppercase tracking-widest text-white/35">Total Clients</span>
-          <span className="text-2xl font-display text-white/90 mt-1">{totalClients}</span>
-        </GlassCard>
-        <GlassCard className="p-4 flex flex-col relative overflow-hidden group">
-          <div className="absolute top-0 right-0 w-12 h-12 bg-emerald-500/5 rounded-bl-full flex items-center justify-center">
-            <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
-          </div>
-          <span className="text-[8px] font-mono uppercase tracking-widest text-emerald-400/80">Live</span>
-          <span className="text-2xl font-display text-emerald-400 mt-1">{greenCount}</span>
-        </GlassCard>
-        <GlassCard className="p-4 flex flex-col relative overflow-hidden">
-          <div className="absolute top-0 right-0 w-12 h-12 bg-auris-orange/5 rounded-bl-full flex items-center justify-center">
-            <span className="w-1.5 h-1.5 rounded-full bg-auris-orange animate-pulse" />
-          </div>
-          <span className="text-[8px] font-mono uppercase tracking-widest text-auris-orange/80">Pending</span>
-          <span className="text-2xl font-display text-auris-orange mt-1">{amberCount}</span>
-        </GlassCard>
-        <GlassCard className="p-4 flex flex-col relative overflow-hidden">
-          <div className="absolute top-0 right-0 w-12 h-12 bg-red-500/5 rounded-bl-full flex items-center justify-center">
-            <span className="w-1.5 h-1.5 rounded-full bg-red-500 animate-pulse" />
-          </div>
-          <span className="text-[8px] font-mono uppercase tracking-widest text-red-400/80">Offline</span>
-          <span className="text-2xl font-display text-red-400 mt-1">{redCount}</span>
-        </GlassCard>
+      {/* Stats Cards */}
+      <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-8">
+        <div className="p-5 border border-[#E5E7EB] rounded-lg bg-white shadow-sm">
+          <span className="text-xs font-semibold text-[#6B7280] uppercase tracking-wider block">Total Clients</span>
+          <span className="text-3xl font-bold text-[#111827] mt-2 block">{totalClients}</span>
+        </div>
+        <div className="p-5 border border-[#E5E7EB] rounded-lg bg-white shadow-sm">
+          <span className="text-xs font-semibold text-[#16A34A] uppercase tracking-wider block">Live</span>
+          <span className="text-3xl font-bold text-[#16A34A] mt-2 block">{liveCount}</span>
+        </div>
+        <div className="p-5 border border-[#E5E7EB] rounded-lg bg-white shadow-sm">
+          <span className="text-xs font-semibold text-[#CA8A04] uppercase tracking-wider block">Pending</span>
+          <span className="text-3xl font-bold text-[#CA8A04] mt-2 block">{pendingCount}</span>
+        </div>
+        <div className="p-5 border border-[#E5E7EB] rounded-lg bg-white shadow-sm">
+          <span className="text-xs font-semibold text-[#DC2626] uppercase tracking-wider block">Offline</span>
+          <span className="text-3xl font-bold text-[#DC2626] mt-2 block">{offlineCount}</span>
+        </div>
       </div>
 
+      {/* Clients Table */}
       {loading ? (
-        <div className="flex-1 flex items-center justify-center font-mono text-xs text-white/40">
-          <RefreshCw className="w-6 h-6 animate-spin mr-3 text-auris-cyan" />
-          Synchronizing Overwatch Telemetry...
+        <div className="flex-1 flex items-center justify-center text-sm text-[#6B7280]">
+          <RefreshCw className="w-6 h-6 animate-spin mr-2 text-[#1A3C5E]" />
+          Loading client telemetry...
         </div>
       ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4 gap-6">
-          {clients.map(client => {
-            const isFactory = client.plan === 'FACTORY';
-            const trialStart = client.factoryConfig?.trial_start;
-            let trialDay = 1;
-            let trialPercent = 3.33;
-            if (isFactory && trialStart) {
-              const start = new Date(trialStart);
-              const diffMs = Date.now() - start.getTime();
-              trialDay = Math.max(1, Math.min(30, Math.ceil(diffMs / 86400000)));
-              trialPercent = (trialDay / 30) * 100;
-            }
-
-            return (
-              <GlassCard 
-                key={client.store_id} 
-                className="p-6 group relative border border-white/5 hover:border-auris-cyan/35 transition-all duration-300 shadow-xl hover:shadow-[0_0_20px_rgba(0,255,255,0.05)]"
-                onClick={() => onSelectRegistryClient(client.store_id)}
-              >
-                <div className="absolute top-6 right-6 flex items-center gap-1.5">
-                  <span className={`w-3.5 h-3.5 rounded-full shadow-[0_0_10px_currentColor] ${
-                    client.statusColor === 'green' 
-                      ? 'text-emerald-500 bg-emerald-500' 
-                      : client.statusColor === 'amber'
-                        ? 'text-auris-orange bg-auris-orange'
-                        : client.statusColor === 'red'
-                          ? 'text-red-500 bg-red-500'
-                          : 'text-white/20 bg-white/10'
-                  }`} />
-                </div>
-
-                <div className="flex justify-between items-start mb-4">
-                  <div className="flex flex-col gap-1.5">
-                    <span className="text-[9px] font-mono font-bold px-2 py-0.5 rounded bg-auris-cyan/10 border border-auris-cyan/30 text-auris-cyan w-fit uppercase tracking-wider">
+        <div className="border border-[#E5E7EB] rounded-lg overflow-hidden bg-white shadow-sm">
+          <table className="min-w-full divide-y divide-[#E5E7EB]">
+            <thead className="bg-[#F8F9FA]">
+              <tr>
+                <th className="px-6 py-3 text-left text-xs font-semibold text-[#6B7280] uppercase tracking-wider">Name</th>
+                <th className="px-6 py-3 text-left text-xs font-semibold text-[#6B7280] uppercase tracking-wider">Store ID</th>
+                <th className="px-6 py-3 text-left text-xs font-semibold text-[#6B7280] uppercase tracking-wider">Plan</th>
+                <th className="px-6 py-3 text-left text-xs font-semibold text-[#6B7280] uppercase tracking-wider">Status</th>
+                <th className="px-6 py-3 text-left text-xs font-semibold text-[#6B7280] uppercase tracking-wider">Last Active</th>
+                <th className="px-6 py-3 text-right text-xs font-semibold text-[#6B7280] uppercase tracking-wider">Action</th>
+              </tr>
+            </thead>
+            <tbody className="bg-white divide-y divide-[#E5E7EB] text-sm">
+              {clients.map(client => (
+                <tr key={client.store_id} className="hover:bg-gray-50 transition-colors">
+                  <td className="px-6 py-4 font-medium text-[#111827]">{client.store_name}</td>
+                  <td className="px-6 py-4 font-mono text-[#6B7280]">{client.store_id}</td>
+                  <td className="px-6 py-4">
+                    <span className={`inline-flex px-2 py-0.5 text-xs font-semibold rounded-full ${
+                      client.plan === 'FACTORY' 
+                        ? 'bg-blue-50 text-blue-700' 
+                        : 'bg-green-50 text-green-700'
+                    }`}>
                       {client.plan}
                     </span>
-                    <span className="text-[9px] font-mono text-white/30 tracking-wider uppercase mt-1">
-                      ID: {client.store_id}
-                    </span>
-                  </div>
-                </div>
-
-                <h3 className="text-xl font-display font-medium mb-4 group-hover:text-auris-cyan transition-colors truncate pr-8">
-                  {client.store_name}
-                </h3>
-                
-                <div className="space-y-4">
-                  {isFactory && trialStart && (
-                    <div className="space-y-1">
-                      <div className="flex justify-between text-[8px] font-mono text-white/30 uppercase tracking-wider">
-                        <span>Trial Duration</span>
-                        <span className="text-auris-cyan">Day {trialDay} of 30</span>
-                      </div>
-                      <div className="w-full h-1.5 bg-black/40 rounded-full overflow-hidden border border-white/5">
-                        <div 
-                          className="h-full bg-gradient-to-r from-auris-cyan to-blue-500 rounded-full transition-all duration-500" 
-                          style={{ width: `${trialPercent}%` }}
-                        />
-                      </div>
-                    </div>
-                  )}
-
-                  <div className="w-full h-px bg-white/5" />
-                  
-                  <div className="grid grid-cols-2 gap-4">
-                    <div>
-                      <div className="text-[8px] text-white/25 uppercase tracking-widest font-mono">Last Activity</div>
-                      <div className="text-xs font-mono text-white/80 mt-1 font-medium">
-                        {formatLastActivity(client.last_blob)}
-                      </div>
-                    </div>
-                    <div>
-                      <div className="text-[8px] text-white/25 uppercase tracking-widest font-mono">Nodes</div>
-                      <div className="text-xs font-mono text-white/80 mt-1 font-medium flex items-center gap-1">
-                        <Camera className="w-3 h-3 text-white/40" />
-                        {client.cameras_count || 0} camera{client.cameras_count !== 1 ? 's' : ''}
-                      </div>
-                    </div>
-                  </div>
-                </div>
-
-                <div className="absolute bottom-6 right-6 opacity-0 group-hover:opacity-100 transition-all duration-300 translate-x-2 group-hover:translate-x-0">
-                  <ChevronRight className="w-4 h-4 text-auris-cyan" />
-                </div>
-              </GlassCard>
-            );
-          })}
-        </div>
-      )}
-    </div>
-  );
-};
-
-const MissionControlTab = ({ 
-  onSelectStore, 
-  onSelectRegistryClient 
-}: { 
-  onSelectStore: (id: string) => void;
-  onSelectRegistryClient: (id: string) => void;
-}) => {
-  return <GlobalHealthDashboard onSelectStore={onSelectStore} onSelectRegistryClient={onSelectRegistryClient} />;
-};
-
-// 3. TAB: DASHBOARD (GTA MINIMAP)
-const DashboardTab = ({ storeId, password }: { storeId: string; password?: string }) => {
-  const [tracks, setTracks] = useState<Track[]>([]);
-  const [viewMode, setViewMode] = useState<'live' | 'thermal'>('live');
-  const [activeFloor, setActiveFloor] = useState('floor_0');
-  const [svgMap, setSvgMap] = useState<string>('');
-
-  // Fetch Live Positions
-  useEffect(() => {
-    const fetchPositions = async () => {
-      try {
-        const res = await fetch(`${API_BASE}/api/spatial/live?floor_id=${activeFloor}`, {
-          headers: { 
-            'X-Store-ID': storeId,
-            'X-Password': password || 'test123'
-          }
-        });
-        const data = await res.json();
-        if (data && Array.isArray(data.positions)) {
-          setTracks(data.positions.map((p: any) => ({
-            track_id: p.global_track_id || p.track_id?.toString() || 'unidentified',
-            x_meters: p.x_m,
-            y_meters: p.y_m,
-            camera_id: p.camera_id || 'CAM_01',
-            last_seen: 'now'
-          })));
-        } else {
-          throw new Error("Empty telemetry");
-        }
-      } catch (e) {
-        // Fallback for visual dashboard demonstration
-        setTracks([
-          { track_id: '1024', x_meters: 10 + Math.random(), y_meters: 8 + Math.random(), floor: 'floor_0', camera_id: 'C01', last_seen: 'now' },
-          { track_id: '0982', x_meters: 25 + Math.random(), y_meters: 12 + Math.random(), floor: 'floor_0', camera_id: 'C02', last_seen: 'now' },
-          { track_id: '1105', x_meters: 18 + Math.random(), y_meters: 22 + Math.random(), floor: 'floor_0', camera_id: 'C03', last_seen: 'now', warning: true },
-        ]);
-      }
-    };
-    fetchPositions();
-    const interval = setInterval(fetchPositions, 2000);
-    return () => clearInterval(interval);
-  }, [activeFloor, storeId, password]);
-
-  // Fetch Dynamic SVG Map
-  useEffect(() => {
-    const fetchMap = async () => {
-      try {
-        const res = await fetch(`${API_BASE}/api/spatial/map.svg?floor_id=${activeFloor}`, {
-          headers: {
-            'X-Store-ID': storeId,
-            'X-Password': password || 'test123'
-          }
-        });
-        if (res.ok) {
-          const text = await res.text();
-          setSvgMap(text);
-        }
-      } catch (e) {
-        console.error("Map load failed", e);
-      }
-    };
-    fetchMap();
-  }, [activeFloor, storeId, password]);
-
-  return (
-    <div className="flex h-full animate-in fade-in duration-700">
-      {/* Left: Telemetry */}
-      <aside className="w-80 border-r border-white/5 flex flex-col bg-black/20 backdrop-blur-md">
-        <div className="p-6 border-b border-white/5">
-          <h2 className="text-[10px] uppercase tracking-[0.2em] font-mono text-auris-cyan mb-6 flex items-center gap-2">
-            <Activity className="w-3 h-3" /> System Telemetry
-          </h2>
-          <div className="grid grid-cols-2 gap-3">
-             <div className="p-3 glass rounded-lg bg-auris-cyan/5 border-auris-cyan/20">
-                <div className="text-[10px] text-white/40 uppercase mb-1">Live Tracks</div>
-                <div className="text-xl font-display text-auris-cyan">{tracks.length}</div>
-             </div>
-             <div className="p-3 glass rounded-lg bg-auris-purple/5 border-auris-purple/20">
-                <div className="text-[10px] text-white/40 uppercase mb-1">Status</div>
-                <div className="text-xs font-mono text-auris-purple">NOMINAL</div>
-             </div>
-          </div>
-        </div>
-        
-        <div className="flex-1 overflow-y-auto p-4 space-y-3 custom-scrollbar">
-          {tracks.map(t => (
-            <div key={t.track_id} className={`p-3 glass rounded-lg border-white/5 hover:border-auris-cyan/30 transition-colors ${t.warning ? 'bg-auris-orange/5 border-auris-orange/20' : ''}`}>
-              <div className="flex justify-between text-[10px] font-mono mb-1">
-                <span className={t.warning ? 'text-auris-orange' : 'text-auris-cyan'}>TRACK #{t.track_id}</span>
-                <span className="opacity-30">{t.last_seen}</span>
-              </div>
-              <div className="text-[11px] text-white/70">Position: {t.x_meters.toFixed(2)}m, {t.y_meters.toFixed(2)}m</div>
-            </div>
-          ))}
-        </div>
-      </aside>
-
-      {/* Center: Live Map */}
-      <main className="flex-1 relative bg-[radial-gradient(circle_at_center,_#1a1b1e_0%,_#0a0a0a_100%)]">
-        {/* Floor Switcher */}
-        <div className="absolute bottom-8 left-1/2 -translate-x-1/2 z-20 flex gap-2 p-1 glass rounded-full">
-          {['Floor 0', 'Floor 1', 'Roof'].map(f => (
-            <button 
-              key={f}
-              onClick={() => setActiveFloor(f.toLowerCase().replace(' ', '_'))}
-              className={`px-6 py-2 rounded-full text-[10px] uppercase font-display tracking-widest transition-all ${activeFloor === f.toLowerCase().replace(' ', '_') ? 'bg-auris-cyan text-black' : 'text-white/40 hover:text-white/60'}`}
-            >
-              {f}
-            </button>
-          ))}
-        </div>
-
-        {/* Mode Toggle */}
-        <div className="absolute top-8 left-1/2 -translate-x-1/2 z-20 flex p-1 glass rounded-full">
-            <button onClick={() => setViewMode('live')} className={`px-4 py-2 rounded-full text-[9px] uppercase tracking-widest transition-all ${viewMode === 'live' ? 'bg-auris-cyan text-black' : 'text-white/40'}`}>LIVE MAP</button>
-            <button onClick={() => setViewMode('thermal')} className={`px-4 py-2 rounded-full text-[9px] uppercase tracking-widest transition-all ${viewMode === 'thermal' ? 'bg-auris-purple text-white' : 'text-white/40'}`}>THERMAL</button>
-        </div>
-
-        <div className="absolute inset-0 flex items-center justify-center p-12">
-          <div className="relative w-full h-full glass rounded-3xl overflow-hidden border-white/10 flex items-center justify-center">
-            {/* Radar Sweep */}
-            {viewMode === 'live' && (
-               <motion.div 
-                 animate={{ rotate: 360 }}
-                 transition={{ duration: 12, repeat: Infinity, ease: "linear" }}
-                 className="absolute inset-0 pointer-events-none opacity-10 z-10"
-                 style={{ background: 'conic-gradient(from 0deg at 50% 50%, white, transparent 30%)' }}
-               />
-            )}
-
-            {svgMap ? (
-              <div className="relative w-full h-full flex items-center justify-center p-6">
-                <div 
-                  className={`w-full h-full flex items-center justify-center transition-all duration-1000 ${viewMode === 'thermal' ? 'blur-lg brightness-110' : ''}`}
-                  dangerouslySetInnerHTML={{ __html: svgMap }} 
-                />
-                
-                {/* Live Overlaid Dots */}
-                <div className="absolute inset-0 pointer-events-none">
-                  {tracks.map(t => (
-                    <motion.div
-                      key={t.track_id}
-                      animate={{ scale: [1, 1.2, 1], opacity: [0.7, 1, 0.7] }}
-                      transition={{ duration: 1.5, repeat: Infinity }}
-                      className={`absolute w-3.5 h-3.5 rounded-full flex items-center justify-center shadow-lg border border-white`}
-                      style={{
-                        left: `${Math.min(Math.max((t.x_meters / 50) * 100, 5), 95)}%`,
-                        top: `${Math.min(Math.max((t.y_meters / 50) * 100, 5), 95)}%`,
-                        backgroundColor: t.warning ? '#ff453a' : '#0a84ff',
-                        boxShadow: t.warning ? '0 0 15px #ff453a' : '0 0 15px #0a84ff'
-                      }}
-                    >
-                      <span className="absolute bottom-5 font-mono text-[7px] text-white bg-black/80 px-1 py-0.5 rounded border border-white/10 whitespace-nowrap">
-                        #{t.track_id}
+                  </td>
+                  <td className="px-6 py-4">
+                    <span className="flex items-center gap-1.5">
+                      <span className={`w-2.5 h-2.5 rounded-full ${
+                        client.statusColor === 'green' ? 'bg-[#16A34A]' :
+                        client.statusColor === 'amber' ? 'bg-[#CA8A04]' : 'bg-[#DC2626]'
+                      }`} />
+                      <span className="capitalize text-xs font-medium text-[#374151]">
+                        {client.statusColor === 'green' ? 'Online' :
+                         client.statusColor === 'amber' ? 'Warning' : 'Offline'}
                       </span>
-                    </motion.div>
-                  ))}
-                </div>
-              </div>
-            ) : (
-              <svg viewBox="0 0 1000 800" className={`w-full h-full transition-all duration-1000 ${viewMode === 'thermal' ? 'blur-lg brightness-110' : ''}`}>
-                <rect x="100" y="100" width="800" height="600" fill="hsl(240,10%,6%)" stroke="rgba(0,255,255,0.2)" strokeWidth="2" />
-                <path d="M100 400 L400 400 M600 100 L600 500" stroke="white" strokeWidth="2" opacity="0.3" />
-                
-                {/* Camera Cones */}
-                <g className="text-auris-purple/20">
-                  <path d="M100 100 L250 100 A 150 150 0 0 1 100 250 Z" fill="currentColor" />
-                  <path d="M900 700 L750 700 A 150 150 0 0 1 900 550 Z" fill="currentColor" />
-                </g>
-
-                {/* Tracks */}
-                {tracks.map(t => (
-                  <g key={t.track_id} transform={`translate(${t.x_meters * 25}, ${t.y_meters * 25})`}>
-                     <motion.circle 
-                        animate={{ scale: [1, 1.5, 1], opacity: [0.2, 0.4, 0.2] }}
-                        transition={{ duration: 2, repeat: Infinity }}
-                        r="20" fill={t.warning ? "hsl(30, 100%, 50%)" : "hsl(180, 100%, 50%)"} 
-                     />
-                     <circle r="6" fill={t.warning ? "hsl(30, 100%, 50%)" : "hsl(180, 100%, 50%)"} />
-                     <text y="-12" textAnchor="middle" fill="white" fontSize="9" className="font-mono uppercase opacity-50">#{t.track_id}</text>
-                  </g>
-                ))}
-              </svg>
-            )}
-          </div>
-        </div>
-      </main>
-
-      {/* Right: Metrics */}
-      <aside className="w-80 border-l border-white/5 p-6 flex flex-col gap-6 bg-black/20 backdrop-blur-md">
-         <h2 className="text-[10px] uppercase tracking-[0.2em] font-mono text-white/40 flex items-center gap-2">
-            <ShieldCheck className="w-3 h-3 text-auris-cyan" /> Perspective Analysis
-         </h2>
-         <MetricCard label="Current Occupancy" value={tracks.length} unit="PERSONS" trend="+12%" cyan />
-         <MetricCard label="Avg Dwell Time" value="14.5" unit="MINUTES" trend="-2%" />
-         <MetricCard label="Security Confidence" value="98.2" unit="PERCENT" />
-         
-         <div className="mt-auto glass p-4 rounded-xl border-orange-500/20 bg-orange-500/5">
-            <h3 className="text-[10px] text-orange-500 font-bold uppercase flex items-center gap-2 mb-2">
-              <AlertTriangle className="w-3 h-3" /> Recent Alerts
-            </h3>
-            <div className="space-y-2">
-              <div className="text-[11px] text-white/60">14:22 - Camera offline in Sector G</div>
-              <div className="text-[11px] text-white/60">12:10 - Anomalous dwell in Lobby</div>
-            </div>
-         </div>
-      </aside>
-    </div>
-  );
-};
-
-// 4. TAB: MAPPING
-const MappingTab = () => {
-  const [layers, setLayers] = useState<any[]>([]);
-  const [activeLayer, setActiveLayer] = useState<number | null>(null);
-
-  const onDrop = useCallback((acceptedFiles: File[]) => {
-    acceptedFiles.forEach(file => {
-      const reader = new FileReader();
-      reader.onload = () => {
-        setLayers(prev => [...prev, {
-          id: Date.now(),
-          name: file.name,
-          type: file.type,
-          data: reader.result,
-          x: 0, y: 0, scale: 1, rotate: 0
-        }]);
-      };
-      reader.readAsDataURL(file);
-    });
-  }, []);
-
-  const { getRootProps, getInputProps, isDragActive } = useDropzone({ onDrop } as any);
-
-  const updateLayer = (id: number, delta: any) => {
-    setLayers(prev => prev.map(l => l.id === id ? { ...l, ...delta } : l));
-  };
-
-  return (
-    <div className="flex h-full gap-6 p-6 overflow-hidden">
-      <aside className="w-80 flex flex-col gap-4 h-full overflow-y-auto custom-scrollbar">
-        <GlassCard className="p-6">
-          <div {...getRootProps()} className={`border-2 border-dashed rounded-xl p-8 transition-all text-center cursor-pointer ${isDragActive ? 'border-auris-cyan bg-auris-cyan/5' : 'border-white/10 hover:border-auris-cyan/30'}`}>
-            <input {...getInputProps()} />
-            <FileUp className="w-8 h-8 text-auris-cyan mx-auto mb-4" />
-            <p className="text-[10px] uppercase tracking-widest text-white/40">Upload LiDAR / SVG / DXF</p>
-          </div>
-        </GlassCard>
-
-        {layers.map((layer, i) => (
-          <GlassCard key={layer.id} className={`p-4 cursor-pointer transition-all ${activeLayer === i ? 'ring-1 ring-auris-cyan' : ''}`} onClick={() => setActiveLayer(i)}>
-            <div className="flex justify-between items-center mb-4">
-              <span className="text-[11px] font-mono truncate max-w-[150px]">{layer.name}</span>
-              <button onClick={(e) => { e.stopPropagation(); setLayers(prev => prev.filter(l => l.id !== layer.id)) }} className="text-white/20 hover:text-red-500">
-                <Trash2 className="w-3 h-3" />
-              </button>
-            </div>
-            
-            <div className="space-y-4">
-               <TransformSlider label="Offset X" value={layer.x} min={-500} max={500} onChange={(v: number) => updateLayer(layer.id, { x: v })} />
-               <TransformSlider label="Offset Y" value={layer.y} min={-500} max={500} onChange={(v: number) => updateLayer(layer.id, { y: v })} />
-               <TransformSlider label="Scale" value={layer.scale} min={0.1} max={5} step={0.01} onChange={(v: number) => updateLayer(layer.id, { scale: v })} />
-               <TransformSlider label="Rotate" value={layer.rotate} min={0} max={360} onChange={(v: number) => updateLayer(layer.id, { rotate: v })} />
-            </div>
-          </GlassCard>
-        ))}
-        
-        <button 
-          onClick={() => alert("LiDAR constraints stitched. Executing RoomPlan mesh solver on Azure...")}
-          className="relative overflow-hidden px-6 py-4 rounded font-display font-medium bg-gradient-to-r from-blue-600 to-auris-purple uppercase tracking-[0.2em] text-[10px] mt-auto"
-        >
-           Commit Stitched Map
-        </button>
-      </aside>
-
-      <main className="flex-1 glass rounded-3xl relative overflow-hidden bg-[hsl(240,10%,3%)]">
-        <div className="absolute inset-0 opacity-5" style={{ backgroundImage: 'linear-gradient(rgba(255,255,255,0.1) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,0.1) 1px, transparent 1px)', backgroundSize: '40px 40px' }} />
-        
-        <div className="flex items-center justify-center h-full">
-          {layers.length === 0 ? (
-            <div className="text-center text-white/20">
-              <Layers className="w-12 h-12 mx-auto mb-4 opacity-20" />
-              <p className="text-xs uppercase tracking-widest">No mapping layers active</p>
-            </div>
-          ) : (
-            <div className="relative w-full h-full flex items-center justify-center">
-               {layers.map((layer, i) => (
-                 <motion.div 
-                   key={layer.id}
-                   animate={{ x: layer.x, y: layer.y, scale: layer.scale, rotate: layer.rotate }}
-                   className={`absolute w-3/4 h-3/4 flex items-center justify-center pointer-events-none ${activeLayer === i ? 'opacity-100' : 'opacity-30'}`}
-                 >
-                   {typeof layer.data === 'string' && layer.data.startsWith('data:image') ? (
-                     <img src={layer.data} className="max-w-full max-h-full border border-auris-cyan/30 shadow-[0_0_20px_rgba(0,255,255,0.1)]" draggable={false} />
-                   ) : (
-                     <div className="w-full h-full glass border-auris-cyan/40 p-12 flex items-center justify-center font-mono text-[10px]">
-                        [LEGACY DATA RENDER]
-                     </div>
-                   )}
-                 </motion.div>
-               ))}
-            </div>
-          )}
-        </div>
-      </main>
-    </div>
-  );
-};
-
-function TransformSlider({ label, value, ...props }: any) {
-  return (
-    <div className="space-y-1">
-      <div className="flex justify-between text-[9px] uppercase tracking-tighter text-white/40 font-mono">
-        <span>{label}</span>
-        <span>{value}</span>
-      </div>
-      <input type="range" className="w-full h-1 bg-white/10 rounded-full appearance-none accent-auris-cyan cursor-pointer" value={value} onChange={e => props.onChange(Number(e.target.value))} {...props} />
-    </div>
-  );
-}
-
-// 5. TAB: CALIBRATION
-const CalibrationTab = ({ storeId, password }: { storeId: string; password?: string }) => {
-    const [points, setPoints] = useState<any[]>([]);
-    const [imgUrl, setImgUrl] = useState('https://picsum.photos/seed/calibrate/1200/800');
-    const [cameraId, setCameraId] = useState('CAM_001');
-    const [calibMsg, setCalibMsg] = useState('');
-
-    const fetchSnapshot = async () => {
-      try {
-        const res = await fetch(`${API_BASE}/api/calibration/snapshot?store_id=${storeId}&camera_id=${cameraId}`, {
-          headers: {
-            'X-Store-ID': storeId,
-            'X-Password': password || 'test123'
-          }
-        });
-        if (res.ok) {
-          const data = await res.json();
-          if (data && data.full_frame_b64) {
-            setImgUrl(data.full_frame_b64.startsWith('data:') ? data.full_frame_b64 : `data:image/jpeg;base64,${data.full_frame_b64}`);
-          }
-        } else {
-          setImgUrl('https://picsum.photos/seed/calibrate/1200/800');
-        }
-      } catch (e) {
-        setImgUrl('https://picsum.photos/seed/calibrate/1200/800');
-      }
-    };
-
-    useEffect(() => {
-      fetchSnapshot();
-    }, [storeId, cameraId]);
-    
-    const handleCanvasClick = (e: React.MouseEvent) => {
-      if (points.length >= 4) return;
-      const rect = e.currentTarget.getBoundingClientRect();
-      const px = ((e.clientX - rect.left) / rect.width) * 100;
-      const py = ((e.clientY - rect.top) / rect.height) * 100;
-      setPoints([...points, { px, py, xm: 0, ym: 0 }]);
-    };
-
-    const handleSolveHomography = async () => {
-      if (points.length < 4) {
-        setCalibMsg("Please select exactly 4 points.");
-        return;
-      }
-      setCalibMsg("Solving homography system matrix...");
-      try {
-        const payload = {
-          store_id: storeId,
-          camera_id: cameraId,
-          floor_id: 'floor_0',
-          points: points.map((p, idx) => ({
-            px: p.px,
-            py: p.py,
-            x_m: p.xm,
-            y_m: p.ym,
-            label: `GCP_${idx + 1}`
-          }))
-        };
-        const res = await fetch(`${API_BASE}/api/calibration/homography?store_id=${storeId}&camera_id=${cameraId}&floor_id=floor_0`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'X-Store-ID': storeId,
-            'X-Password': password || 'test123'
-          },
-          body: JSON.stringify(payload)
-        });
-        const data = await res.json();
-        if (res.ok) {
-          setCalibMsg(`Solver success! Dynamic RMSE: ${data.rmse_m.toFixed(4)} meters.`);
-        } else {
-          setCalibMsg(`Solve error: ${data.detail || "Homography system is singular."}`);
-        }
-      } catch (e) {
-        setCalibMsg("Failed to solve homography.");
-      }
-    };
-
-    return (
-        <div className="flex h-full p-6 gap-6">
-            <aside className="w-96 flex flex-col gap-6 h-full overflow-y-auto custom-scrollbar">
-                <GlassCard className="p-6">
-                    <h3 className="text-xs uppercase tracking-widest text-auris-cyan mb-6">Homography Solver</h3>
-                    <p className="text-[10px] text-white/40 mb-6 italic">Click 4 points on the floor to establish real-world scale.</p>
-                    
-                    <div className="space-y-4">
-                        {points.map((p, i) => (
-                            <div key={i} className="p-3 glass rounded-lg border-white/5 grid grid-cols-2 gap-3">
-                                <div className="col-span-2 text-[9px] font-mono text-auris-cyan uppercase">Reference Pt #{i+1}</div>
-                                <div className="space-y-1">
-                                    <label className="text-[8px] uppercase opacity-40">World X (m)</label>
-                                    <input type="number" className="w-full bg-white/5 border border-white/10 rounded px-2 py-1 text-xs" 
-                                           onChange={e => setPoints(pts => pts.map((pt, idx) => idx === i ? {...pt, xm: Number(e.target.value)} : pt))} />
-                                </div>
-                                <div className="space-y-1">
-                                    <label className="text-[8px] uppercase opacity-40">World Y (m)</label>
-                                    <input type="number" className="w-full bg-white/5 border border-white/10 rounded px-2 py-1 text-xs" 
-                                           onChange={e => setPoints(pts => pts.map((pt, idx) => idx === i ? {...pt, ym: Number(e.target.value)} : pt))} />
-                                </div>
-                            </div>
-                        ))}
-                    </div>
-
+                    </span>
+                  </td>
+                  <td className="px-6 py-4 text-[#6B7280] font-mono text-xs">{formatLastActivity(client.last_blob)}</td>
+                  <td className="px-6 py-4 text-right">
                     <button 
-                      onClick={handleSolveHomography}
-                      disabled={points.length < 4} 
-                      className="relative overflow-hidden px-6 py-4 rounded font-display bg-gradient-to-r from-blue-600 to-auris-purple w-full uppercase tracking-[0.2em] text-[10px] mt-8 disabled:opacity-30"
+                      onClick={() => onSelectRegistryClient(client.store_id)}
+                      className="px-3 py-1.5 text-xs font-semibold text-white bg-[#1A3C5E] rounded-lg hover:opacity-90 transition-opacity"
                     >
-                        Compute Homography 3x3
+                      View
                     </button>
-                    <button onClick={() => { setPoints([]); setCalibMsg(''); }} className="w-full text-[9px] uppercase tracking-widest text-white/20 mt-4 hover:text-white/40">Clear Calibration</button>
-                    
-                    {calibMsg && (
-                      <div className="mt-4 p-3 rounded bg-white/5 text-[9px] font-mono text-auris-cyan border border-auris-cyan/20">
-                        {calibMsg.toUpperCase()}
-                      </div>
-                    )}
-                </GlassCard>
-
-                <div className="space-y-2">
-                    <h4 className="text-[9px] uppercase tracking-widest text-white/40 ml-2">Camera Registry</h4>
-                    <GlassCard className="p-4 space-y-2">
-                        {['CAM_001', 'CAM_002', 'CAM_003'].map(id => (
-                            <div 
-                              key={id} 
-                              className={`flex items-center justify-between p-2 rounded hover:bg-white/5 transition-colors group cursor-pointer ${cameraId === id ? 'bg-white/10 border-l-2 border-auris-cyan' : ''}`}
-                              onClick={() => { setCameraId(id); setPoints([]); setCalibMsg(''); }}
-                            >
-                                <div className="flex items-center gap-3">
-                                    <Camera className="w-4 h-4 text-white/20" />
-                                    <span className="text-xs font-mono">{id}</span>
-                                </div>
-                                <div className="flex items-center gap-2">
-                                     <div className={`w-1.5 h-1.5 rounded-full ${cameraId === id ? 'bg-auris-cyan' : 'bg-white/10'}`} />
-                                     <ChevronRight className="w-3 h-3 text-white/10 group-hover:text-auris-cyan" />
-                                </div>
-                            </div>
-                        ))}
-                    </GlassCard>
-                </div>
-            </aside>
-
-            <main className="flex-1 relative glass rounded-3xl overflow-hidden cursor-crosshair group shadow-2xl" onClick={handleCanvasClick}>
-                <img src={imgUrl} className="w-full h-full object-cover transition-transform duration-1000 group-hover:scale-105" draggable={false} referrerPolicy="no-referrer" />
-                <div className="absolute inset-0 bg-black/40 pointer-events-none" />
-                
-                {points.map((p, i) => (
-                    <motion.div 
-                        initial={{ scale: 0 }} animate={{ scale: 1 }}
-                        key={i} className="absolute -translate-x-1/2 -translate-y-1/2 flex flex-col items-center pointer-events-none" 
-                        style={{ left: `${p.px}%`, top: `${p.py}%` }}
-                    >
-                        <div className="w-4 h-4 rounded-full bg-auris-cyan shadow-[0_0_15px_hsl(180,100%,50%)] border border-white" />
-                        <div className="mt-2 text-[9px] font-mono bg-black/80 px-2 py-1 rounded text-auris-cyan border border-auris-cyan/30">
-                            GCP_{i+1}: {p.xm}m, {p.ym}m
-                        </div>
-                    </motion.div>
-                ))}
-
-                <div className="absolute bottom-6 left-6 flex items-center gap-4">
-                    <div className="glass px-4 py-2 rounded-full text-[10px] font-mono text-white/50 border-white/5">
-                        {cameraId} ACTIVE STREAM
-                    </div>
-                </div>
-            </main>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </div>
-    );
-};
-
-// 6. TAB: TRAINING
-const TrainingTab = () => {
-  const [cases, setCases] = useState<any[]>([]);
-  const [currentIndex, setCurrentIndex] = useState(0);
-  const [loading, setLoading] = useState(true);
-  const [exportMsg, setExportMsg] = useState('');
-  const [stats, setStats] = useState({ hard_cases: 0, hard_cases_pending: 0, pseudo_labels: 0 });
-
-  const fetchCases = async () => {
-    try {
-      const res = await fetch(`${API_BASE}/api/training/hard-cases`, {
-        headers: { 'X-Admin-Key': ADMIN_KEY }
-      });
-      const data = await res.json();
-      if (data && Array.isArray(data.cases)) {
-        setCases(data.cases);
-      }
-      
-      // Load training stats
-      const statRes = await fetch(`${API_BASE}/api/training/stats`, {
-        headers: { 'X-Admin-Key': ADMIN_KEY }
-      });
-      const statData = await statRes.json();
-      setStats(statData);
-    } catch (e) {
-      console.error(e);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  useEffect(() => {
-    fetchCases();
-  }, []);
-
-  const handleReview = async (action: 'approve' | 'reject') => {
-    if (!cases[currentIndex]) return;
-    const caseId = cases[currentIndex]._id;
-    try {
-      const res = await fetch(`${API_BASE}/api/training/review`, {
-        method: 'POST',
-        headers: { 
-          'Content-Type': 'application/json',
-          'X-Admin-Key': ADMIN_KEY
-        },
-        body: JSON.stringify({ case_id: caseId, action })
-      });
-      if (res.ok) {
-        setCurrentIndex(v => v + 1);
-        setStats(prev => ({
-          ...prev,
-          hard_cases_pending: Math.max(prev.hard_cases_pending - 1, 0)
-        }));
-      }
-    } catch (e) {
-      console.error(e);
-    }
-  };
-
-  const handleExport = async () => {
-    setExportMsg("Compiling training dataset manifests...");
-    try {
-      const res = await fetch(`${API_BASE}/api/training/export-yolo`, {
-        method: 'POST',
-        headers: { 'X-Admin-Key': ADMIN_KEY }
-      });
-      const data = await res.json();
-      if (res.ok) {
-        setExportMsg(`Export complete! Manifest: ${data.approved_hard_cases} Approved Hard Cases, ${data.pseudo_labels} Pseudo Labels. GPU cluster job initiated.`);
-      }
-    } catch (e) {
-      setExportMsg("Export pipeline error.");
-    }
-  };
-
-  if (loading) {
-    return (
-      <div className="h-full flex items-center justify-center font-mono text-xs text-white/40">
-        <RefreshCw className="w-6 h-6 animate-spin mr-3 text-auris-cyan" />
-        Syncing AI Pseudo-Label Telemetry...
-      </div>
-    );
-  }
-
-  const currentCase = cases[currentIndex];
-
-  return (
-    <div className="h-full p-12 flex flex-col items-center max-w-4xl mx-auto overflow-y-auto custom-scrollbar">
-       <header className="w-full flex justify-between items-center mb-12">
-          <div className="flex gap-12">
-             <div className="space-y-1">
-                <div className="text-[10px] uppercase text-white/40 tracking-widest">Hard Cases Pending</div>
-                <div className="text-2xl font-display text-white">{stats.hard_cases_pending}</div>
-             </div>
-             <div className="space-y-1">
-                <div className="text-[10px] uppercase text-auris-purple tracking-widest">Model Version</div>
-                <div className="text-2xl font-display text-auris-purple">AURIS-V4.2</div>
-             </div>
-          </div>
-          <button 
-            onClick={handleExport}
-            className="glass px-6 py-3 rounded-xl border-auris-cyan/30 text-auris-cyan text-[10px] uppercase font-bold tracking-widest flex items-center gap-2 hover:bg-auris-cyan/10 transition-all"
-          >
-             <Database className="w-4 h-4" /> Export YOLO Dataset
-          </button>
-       </header>
-
-       {exportMsg && (
-         <div className="w-full max-w-2xl mb-6 p-4 rounded-xl bg-auris-cyan/5 border border-auris-cyan/20 text-xs font-mono text-auris-cyan">
-           {exportMsg.toUpperCase()}
-         </div>
-       )}
-
-       <div className="w-full flex-1 flex flex-col items-center gap-8">
-          {!currentCase ? (
-            <GlassCard className="p-8 text-center max-w-md w-full">
-               <ShieldCheck className="w-12 h-12 text-auris-cyan mx-auto mb-4 animate-pulse" />
-               <h3 className="text-lg font-display uppercase tracking-widest text-white/90">Overwatch Calibrated</h3>
-               <p className="text-xs text-white/40 mt-2">All pseudo-labels and custom class drift logs are successfully updated. Nominal training pipeline.</p>
-            </GlassCard>
-          ) : (
-            <>
-              <div className="relative w-full max-w-2xl aspect-square glass rounded-3xl overflow-hidden border-white/10 group flex items-center justify-center">
-                 <motion.img 
-                   key={currentCase._id}
-                   initial={{ opacity: 0, x: 50 }} animate={{ opacity: 1, x: 0 }}
-                   src={currentCase.crop_b64.startsWith('data:') ? currentCase.crop_b64 : `data:image/jpeg;base64,${currentCase.crop_b64}`} 
-                   className="w-full h-full object-cover" 
-                   referrerPolicy="no-referrer"
-                 />
-                 <div className="absolute top-6 left-6 glass px-4 py-2 rounded-lg border-auris-cyan/30 text-[10px] font-mono text-auris-cyan">
-                    PREDICTION CONFIDENCE: {(Number(currentCase.confidence) * 100).toFixed(1)}% | NODE ID: {currentCase.camera_id}
-                 </div>
-              </div>
-
-              <div className="flex gap-8 w-full max-w-2xl">
-                  <button onClick={() => handleReview('reject')} className="flex-1 py-6 glass rounded-2xl border-red-500/30 text-red-500 uppercase tracking-[0.3em] font-display text-xs hover:bg-red-500/10 transition-all flex items-center justify-center gap-2 group">
-                     <XCircle className="w-5 h-5 group-hover:scale-110 transition-transform" /> Reject Label
-                  </button>
-                  <button onClick={() => handleReview('approve')} className="flex-1 py-6 glass rounded-2xl border-auris-cyan/30 text-auris-cyan uppercase tracking-[0.3em] font-display text-xs hover:bg-auris-cyan/10 transition-all flex items-center justify-center gap-2 group">
-                     <CheckCircle2 className="w-5 h-5 group-hover:scale-110 transition-transform" /> Approve Label
-                  </button>
-              </div>
-              
-              <div className="w-full max-w-2xl h-1 bg-white/5 rounded-full overflow-hidden">
-                 <motion.div animate={{ width: `${(currentIndex / Math.max(cases.length, 1)) * 100}%` }} className="h-full bg-auris-cyan" />
-              </div>
-              <div className="text-[10px] font-mono text-white/30 tracking-widest">{currentIndex + 1} / {cases.length} REVIEWED</div>
-            </>
-          )}
-       </div>
+      )}
     </div>
   );
 };
 
-// 7. TAB: AI REPORT
-const ReportTab = ({ storeId, password }: { storeId: string; password?: string }) => {
-  const [loading, setLoading] = useState(false);
-  const [report, setReport] = useState<string>('');
-  const [generatedAt, setGeneratedAt] = useState<string>('');
-
-  const fetchReport = async () => {
-    setLoading(true);
-    try {
-      const res = await fetch(`${API_BASE}/api/report`, {
-        headers: {
-          'X-Store-ID': storeId,
-          'X-Password': password || 'test123'
-        }
-      });
-      const data = await res.json();
-      if (data && data.report) {
-        setReport(data.report);
-        setGeneratedAt(data.generated_at);
-      }
-    } catch (e) {
-      console.error(e);
-      setReport("Connection failed: could not load intelligence synopsis.");
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  useEffect(() => {
-    fetchReport();
-  }, [storeId, password]);
-
-  const handlePrint = () => window.print();
-
-  return (
-    <div className="h-full p-12 max-w-5xl mx-auto overflow-y-auto custom-scrollbar print:p-0">
-       <header className="flex justify-between items-center mb-12">
-          <div>
-            <h1 className="text-[10px] uppercase tracking-[0.4em] font-mono text-auris-cyan">AURIS EXECUTIVE SYNOPSIS</h1>
-            <h2 className="text-3xl font-display font-light mt-2 tracking-tight uppercase">Daily Spatial Intelligence</h2>
-          </div>
-          <div className="flex gap-3 print:hidden">
-            <button className="glass p-3 rounded-xl border-white/5 hover:bg-white/5" onClick={fetchReport}>
-               <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
-            </button>
-            <button className="relative overflow-hidden px-6 py-3 rounded font-display bg-gradient-to-r from-blue-600 to-auris-purple uppercase tracking-widest text-[10px]" onClick={handlePrint}>
-               Export Intelligence PDF
-            </button>
-          </div>
-       </header>
-
-       {loading ? (
-         <div className="h-48 flex items-center justify-center font-mono text-xs text-white/40">
-           <RefreshCw className="w-6 h-6 animate-spin mr-3 text-auris-cyan" />
-           Aggregating Multi-Modal Spatial insights...
-         </div>
-       ) : (
-         <div className="grid grid-cols-3 gap-6">
-            <GlassCard className="col-span-2 p-8" glow>
-               <h3 className="text-xs font-display font-bold uppercase tracking-widest text-auris-cyan mb-6 flex items-center gap-2">
-                 <FileText className="w-4 h-4" /> Tactical Summary
-               </h3>
-               <p className="text-md leading-relaxed text-white/85 font-display font-light border-l-2 border-auris-cyan pl-8 whitespace-pre-wrap">
-                  {report || "Synchronizing with spatial intelligence engine..."}
-               </p>
-               <div className="mt-12 pt-8 border-t border-white/5 flex gap-12">
-                  <div className="space-y-1">
-                    <div className="text-[9px] uppercase text-white/30">Intelligence Target</div>
-                    <div className="text-sm font-mono text-auris-cyan">{storeId.toUpperCase()}</div>
-                  </div>
-                  <div className="space-y-1">
-                    <div className="text-[9px] uppercase text-white/30">Generated Epoch</div>
-                    <div className="text-sm font-mono">
-                      {generatedAt ? new Date(generatedAt).toLocaleString() : 'N/A'}
-                    </div>
-                  </div>
-               </div>
-            </GlassCard>
-
-            <div className="space-y-6">
-               <GlassCard className="p-6">
-                  <div className="text-[9px] uppercase tracking-widest text-white/30 mb-2">Zone A (Active Core)</div>
-                  <div className="text-xl font-display text-auris-cyan">98.2% Nominal Efficiency</div>
-               </GlassCard>
-               <GlassCard className="p-6">
-                  <div className="text-[9px] uppercase tracking-widest text-white/30 mb-2">Zone B (Loading Area)</div>
-                  <div className="text-xl font-display text-auris-purple">Proximity Bounds Steady</div>
-               </GlassCard>
-               <GlassCard className="p-6">
-                  <div className="text-[9px] uppercase tracking-widest text-white/30 mb-2">Zone C (Transit Hub)</div>
-                  <div className="text-xl font-display text-auris-orange">1.4m Peak Congestion</div>
-               </GlassCard>
-            </div>
-         </div>
-       )}
-
-       <div className="mt-12 grid grid-cols-2 gap-6">
-          <GlassCard className="p-8">
-             <h3 className="text-[10px] uppercase tracking-widest text-white/40 mb-6 font-bold">Spatial Density Heatmap (Daily Avg)</h3>
-             <div className="aspect-video glass rounded-xl overflow-hidden relative">
-                <img src="https://picsum.photos/seed/heatmap/800/450" className="w-full h-full object-cover blur-sm opacity-50" referrerPolicy="no-referrer" />
-                <div className="absolute inset-0 bg-gradient-to-tr from-blue-900/40 via-red-900/40 to-yellow-900/40 mix-blend-overlay" />
-             </div>
-          </GlassCard>
-          <GlassCard className="p-8">
-             <h3 className="text-[10px] uppercase tracking-widest text-white/40 mb-6 font-bold">Action Items</h3>
-             <div className="space-y-4">
-                <p className="text-[11px] text-white/60 flex items-start gap-3">
-                  <span className="w-1 h-1 rounded-full bg-auris-cyan mt-1.5" />
-                  Calibrate Lobby Camera 4 - observed drift in homography matrix.
-                </p>
-                <p className="text-[11px] text-white/60 flex items-start gap-3">
-                  <span className="w-1 h-1 rounded-full bg-auris-cyan mt-1.5" />
-                  Review Zone B person-count threshold; proximity alerts triggered.
-                </p>
-             </div>
-          </GlassCard>
-       </div>
-    </div>
-  );
-};
-
-// 7.5. TAB: FACTORY ONBOARDING & ENVIRONMENT MANAGEMENT
-const FactoryOnboardingView = ({ storeId: initialStoreId }: { storeId: string | null }) => {
-  const [stores, setStores] = useState<any[]>([]);
-  const [configs, setConfigs] = useState<any[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [isModalOpen, setIsModalOpen] = useState(false);
-  const [selectedOnboardStore, setSelectedOnboardStore] = useState('');
-  const [successMsg, setSuccessMsg] = useState('');
-  const [errorMsg, setErrorMsg] = useState('');
-
-  const fetchData = async () => {
-    setLoading(true);
-    try {
-      // 1. Fetch stores
-      const resStores = await fetch(`${API_BASE}/admin/stores`, {
-        headers: { 'X-Admin-Key': ADMIN_KEY }
-      });
-      const dataStores = await resStores.json();
-      
-      // Filter factory stores
-      const factoryStores = (dataStores.stores || []).filter((s: any) => 
-        s.store_id.includes('factory') || s.spatial_status === 'factory'
-      );
-      setStores(factoryStores);
-
-      // 2. Fetch configs
-      const resConfigs = await fetch(`${API_BASE}/api/factory/configs`, {
-        headers: { 'X-Admin-Key': ADMIN_KEY }
-      });
-      const dataConfigs = await resConfigs.json();
-      setConfigs(dataConfigs.configs || []);
-    } catch (e) {
-      console.error("Failed to load factory environment details:", e);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  useEffect(() => {
-    fetchData();
-  }, []);
-
-  const handleActivate = async (sid: string) => {
-    setErrorMsg('');
-    setSuccessMsg('');
-    try {
-      const res = await fetch(`${API_BASE}/api/factory/config`, {
-        method: 'PATCH',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-Admin-Key': ADMIN_KEY
-        },
-        body: JSON.stringify({
-          store_id: sid,
-          status: 'live'
-        })
-      });
-      if (res.ok) {
-        setSuccessMsg(`Factory "${sid.toUpperCase()}" promoted to live environment!`);
-        fetchData();
-      } else {
-        const errData = await res.json();
-        setErrorMsg(errData.detail || "Failed to update factory status.");
-      }
-    } catch (e) {
-      setErrorMsg("Connection failure during promotion.");
-    }
-  };
-
-  const handleOpenOnboard = (sid: string = '') => {
-    setSelectedOnboardStore(sid);
-    setIsModalOpen(true);
-  };
-
-  const handleOnboardSubmit = () => {
-    setIsModalOpen(false);
-    setSuccessMsg(`Factory onboarding checklist submitted successfully for "${selectedOnboardStore.toUpperCase()}"!`);
-    fetchData();
-    setTimeout(() => setSuccessMsg(''), 5000);
-  };
-
-  // Helper to match config status
-  const getFactoryStatus = (sid: string) => {
-    const config = configs.find(c => c.store_id === sid);
-    return config ? config.status : 'un-onboarded';
-  };
-
-  return (
-    <div className="h-full p-4 md:p-12 max-w-6xl mx-auto overflow-y-auto custom-scrollbar relative">
-      <header className="flex flex-col md:flex-row justify-between items-start md:items-end mb-8 md:mb-12 gap-4">
-        <div>
-          <h2 className="text-[10px] uppercase tracking-[0.4em] font-mono text-auris-cyan">AURIS PROVISIONING CORE</h2>
-          <h1 className="text-3xl font-display font-light mt-2 uppercase tracking-tight">Factory Onboarding</h1>
-        </div>
-        <button 
-          onClick={() => handleOpenOnboard('')}
-          className="relative overflow-hidden px-6 py-3 rounded font-display bg-gradient-to-r from-blue-600 to-auris-purple text-[10px] uppercase tracking-widest flex items-center gap-2 w-full md:w-auto justify-center"
-        >
-          <Plus className="w-4 h-4" /> Onboard New Factory
-        </button>
-      </header>
-
-      {successMsg && (
-        <div className="mb-6 p-4 rounded-xl bg-auris-cyan/10 border border-auris-cyan/35 text-xs font-mono text-auris-cyan flex justify-between items-center animate-in fade-in duration-300">
-          <span>{successMsg.toUpperCase()}</span>
-          <button onClick={() => setSuccessMsg('')} className="text-auris-cyan/60 hover:text-auris-cyan">✕</button>
-        </div>
-      )}
-
-      {errorMsg && (
-        <div className="mb-6 p-4 rounded-xl bg-red-500/10 border border-red-500/35 text-xs font-mono text-red-500 flex justify-between items-center animate-in fade-in duration-300">
-          <span>{errorMsg.toUpperCase()}</span>
-          <button onClick={() => setErrorMsg('')} className="text-red-500/60 hover:text-red-500">✕</button>
-        </div>
-      )}
-
-      {loading ? (
-        <div className="h-48 flex items-center justify-center font-mono text-xs text-white/40">
-          <RefreshCw className="w-6 h-6 animate-spin mr-3 text-auris-cyan" />
-          Synchronizing Industry Telemetry...
-        </div>
-      ) : stores.length === 0 ? (
-        <GlassCard className="p-8 text-center max-w-md mx-auto">
-          <LayoutGrid className="w-12 h-12 text-auris-cyan/40 mx-auto mb-4 animate-pulse" />
-          <h3 className="text-sm font-display uppercase tracking-widest text-white/90">No Factory Store Registered</h3>
-          <p className="text-[11px] text-white/40 mt-2">Provision a store containing "factory" in its ID inside the System Registry (Registry tab) first.</p>
-        </GlassCard>
-      ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-          {stores.map(s => {
-            const status = getFactoryStatus(s.store_id);
-            const isLive = status === 'live';
-            const isPending = status === 'pending';
-            const isUnOnboarded = status === 'un-onboarded';
-
-            return (
-              <GlassCard key={s.store_id} className="p-6 border-auris-border relative hover:bg-white/[0.02] transition-colors" glow={isLive}>
-                <div className="flex justify-between items-start mb-6">
-                  <div className="p-4 rounded-2xl bg-auris-cyan/10 text-auris-cyan border border-auris-cyan/30">
-                    <LayoutGrid className="w-6 h-6" />
-                  </div>
-                  <div className="text-right">
-                    <div className="text-[9px] font-mono text-white/30 uppercase tracking-widest mb-1">{s.store_id}</div>
-                    <span className={`inline-flex items-center px-2.5 py-0.5 rounded text-[8px] font-bold font-mono border uppercase tracking-wider
-                      ${isLive ? 'bg-auris-cyan/15 text-auris-cyan border-auris-cyan/35' : 
-                        isPending ? 'bg-auris-orange/15 text-auris-orange border-auris-orange/35' : 
-                        'bg-white/5 text-white/40 border-white/10'}`}>
-                      {status}
-                    </span>
-                  </div>
-                </div>
-
-                <h3 className="text-xl font-display font-medium mb-1">{s.store_name}</h3>
-                <p className="text-[10px] font-mono text-white/40 uppercase mb-6 flex items-center gap-1.5">
-                  <Globe className="w-3 h-3 text-white/20" /> Provisioned {s.created_at ? new Date(s.created_at).toLocaleDateString() : 'N/A'}
-                </p>
-
-                <div className="flex items-center justify-between border-t border-white/5 pt-6 mt-4">
-                  <div className="flex items-center gap-4">
-                    {isPending && (
-                      <button 
-                        onClick={() => handleActivate(s.store_id)}
-                        className="px-4 py-2 bg-gradient-to-r from-blue-600 to-auris-purple hover:opacity-90 rounded font-display font-medium text-[9px] uppercase tracking-widest transition-all"
-                      >
-                        Activate Factory
-                      </button>
-                    )}
-                    {isUnOnboarded && (
-                      <button 
-                        onClick={() => handleOpenOnboard(s.store_id)}
-                        className="px-4 py-2 bg-auris-cyan text-black hover:bg-auris-cyan/90 rounded font-display font-bold text-[9px] uppercase tracking-widest transition-all"
-                      >
-                        Configure Onboarding
-                      </button>
-                    )}
-                    {isLive && (
-                      <span className="text-[9px] font-mono text-auris-cyan flex items-center gap-2">
-                        <CheckCircle2 className="w-3.5 h-3.5" /> Environmental parameters synced
-                      </span>
-                    )}
-                  </div>
-                </div>
-              </GlassCard>
-            );
-          })}
-        </div>
-      )}
-
-      {/* Glass Provisioning Modal */}
-      <AnimatePresence>
-        {isModalOpen && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/85 backdrop-blur-md overflow-y-auto">
-            <motion.div 
-              initial={{ scale: 0.95, opacity: 0 }} 
-              animate={{ scale: 1, opacity: 1 }} 
-              exit={{ scale: 0.95, opacity: 0 }} 
-              className="w-full max-w-3xl p-6 glass rounded-3xl border border-auris-border bg-auris-card relative my-8"
-            >
-              <button 
-                onClick={() => setIsModalOpen(false)}
-                className="absolute top-6 right-6 text-white/40 hover:text-white z-50 p-2 glass rounded-full"
-              >
-                ✕
-              </button>
-
-              <h2 className="text-xl font-display font-semibold mb-2 uppercase tracking-wide">Factory Onboarding Checklist</h2>
-              <p className="text-[10px] text-white/45 mb-6 font-mono">ONBOARDING TELEMETRY SYSTEM PORTAL</p>
-
-              {/* Store Selection if not pre-locked */}
-              {!selectedOnboardStore ? (
-                <div className="mb-6 p-4 glass rounded-xl border-white/5 bg-black/25">
-                  <label className="block text-[9px] uppercase tracking-wider text-auris-cyan mb-2 font-mono">Select Factory Environment</label>
-                  <select 
-                    value={selectedOnboardStore} 
-                    onChange={e => setSelectedOnboardStore(e.target.value)}
-                    className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-xs focus:outline-none focus:border-auris-cyan/50 text-white font-mono"
-                  >
-                    <option value="" disabled className="bg-[#111] text-white/40">-- SELECT A PROVISIONED ENVIRONMENT --</option>
-                    {stores
-                      .filter(s => getFactoryStatus(s.store_id) === 'un-onboarded')
-                      .map(s => (
-                        <option key={s.store_id} value={s.store_id} className="bg-[#111] text-white font-sans">
-                          {s.store_name} ({s.store_id})
-                        </option>
-                      ))}
-                  </select>
-                </div>
-              ) : (
-                <div className="mb-6 p-4 glass rounded-xl border-auris-cyan/15 bg-auris-cyan/5 flex justify-between items-center">
-                  <div>
-                    <div className="text-[8px] font-mono text-auris-cyan uppercase tracking-widest">SELECTED ENVIRONMENT</div>
-                    <div className="text-md font-display text-white mt-0.5">
-                      {stores.find(s => s.store_id === selectedOnboardStore)?.store_name || selectedOnboardStore}
-                    </div>
-                  </div>
-                  <span className="text-[9px] font-mono bg-auris-cyan text-black px-2 py-0.5 rounded font-bold uppercase">{selectedOnboardStore}</span>
-                </div>
-              )}
-
-              {selectedOnboardStore ? (
-                <div className="max-h-[60vh] overflow-y-auto custom-scrollbar rounded-2xl">
-                  <FactoryOnboarding storeId={selectedOnboardStore} onSubmit={handleOnboardSubmit} />
-                </div>
-              ) : (
-                <div className="p-12 text-center border border-dashed border-white/10 rounded-2xl bg-black/10">
-                  <LayoutGrid className="w-8 h-8 text-white/20 mx-auto mb-3" />
-                  <p className="text-[11px] text-white/40">Select a provisioned factory environment from the dropdown above to launch the step-by-step onboarding matrix.</p>
-                </div>
-              )}
-            </motion.div>
-          </div>
-        )}
-      </AnimatePresence>
-    </div>
-  );
-};
-
-
-// --- CLIENT MANAGEMENT (REGISTRY) TAB ---
-const ManagementTab = ({ 
+// --- CLIENTS PAGE (replaces ManagementTab) ---
+const ClientsPage = ({ 
   onSelectStore, 
   initialSelectedClient, 
   clearInitialClient 
@@ -1412,51 +400,26 @@ const ManagementTab = ({
   const [clients, setClients] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [selectedClient, setSelectedClient] = useState<string | null>(null);
-  const [clientTab, setClientTab] = useState<'overview' | 'system' | 'zones' | 'analytics' | 'logs'>('overview');
-
-  useEffect(() => {
-    if (initialSelectedClient) {
-      setSelectedClient(initialSelectedClient);
-      if (clearInitialClient) clearInitialClient();
-    }
-  }, [initialSelectedClient]);
+  const [clientTab, setClientTab] = useState<'overview' | 'system' | 'analytics'>('overview');
   const [searchQuery, setSearchQuery] = useState('');
   
-  // Modal states
+  // Modals state
   const [showAddModal, setShowAddModal] = useState(false);
-  const [addStep, setAddStep] = useState<number>(1);
-  const [numCameras, setNumCameras] = useState<number>(1);
-  const [camerasList, setCamerasList] = useState<Array<{ camera_id: string; label: string; rtsp_url: string; fps: number }>>([
-    { camera_id: 'cam1', label: '', rtsp_url: '', fps: 2 }
-  ]);
-  const [showEditCamerasModal, setShowEditCamerasModal] = useState(false);
-
-  const handleNumCamerasChange = (n: number) => {
-    setNumCameras(n);
-    setCamerasList(prev => {
-      const copy = [...prev];
-      if (copy.length < n) {
-        for (let i = copy.length; i < n; i++) {
-          copy.push({ camera_id: `cam${i + 1}`, label: '', rtsp_url: '', fps: 2 });
-        }
-      } else if (copy.length > n) {
-        return copy.slice(0, n);
-      }
-      return copy;
-    });
-  };
-
+  const [addStep, setAddStep] = useState<1 | 2 | 'success'>(1);
+  const [isStoreIdAuto, setIsStoreIdAuto] = useState(true);
   const [addForm, setAddForm] = useState({
     store_id: '',
     store_name: '',
     city: '',
-    plan: 'FACTORY', // 'FACTORY' | 'RETAIL' | 'PILOT'
+    plan: 'FACTORY' as 'FACTORY' | 'RETAIL' | 'PILOT',
     password: '',
     numShifts: 2,
     shifts: [
       { label: 'Day Shift', startTime: '09:00', endTime: '17:00', days: { Mon: true, Tue: true, Wed: true, Thu: true, Fri: true, Sat: true, Sun: false } },
-      { label: 'Night Shift', startTime: '17:00', endTime: '01:00', days: { Mon: true, Tue: true, Wed: true, Thu: true, Fri: true, Sat: true, Sun: false } }
+      { label: 'Night Shift', startTime: '17:00', endTime: '01:00', days: { Mon: true, Tue: true, Wed: true, Thu: true, Fri: true, Sat: true, Sun: false } },
+      { label: 'Third Shift', startTime: '01:00', endTime: '09:00', days: { Mon: true, Tue: true, Wed: true, Thu: true, Fri: true, Sat: true, Sun: false } }
     ],
+    totalHeadcount: 10,
     operatorWage: 120,
     supervisorWage: 250,
     contractorWage: 180,
@@ -1465,25 +428,42 @@ const ManagementTab = ({
   
   const [createdCredentials, setCreatedCredentials] = useState<any>(null);
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
-
-  // Tab detailed states
   const [detailedStore, setDetailedStore] = useState<any>(null);
-  const [deadTimeLoss, setDeadTimeLoss] = useState<any>(null);
-  const [zones, setZones] = useState<any[]>([]);
-  const [whatsappLogs, setWhatsappLogs] = useState<any[]>([]);
   const [retailFootfall, setRetailFootfall] = useState<any>(null);
   const [revealKey, setRevealKey] = useState(false);
   
-  // Password reset state
-  const [newPassword, setNewPassword] = useState('');
-  const [resettingPassword, setResettingPassword] = useState(false);
+  const [showEditCamerasModal, setShowEditCamerasModal] = useState(false);
+  const [editCamerasList, setEditCamerasList] = useState<any[]>([]);
+
+  // Edge camera state (System tab)
+  const [edgeCameras, setEdgeCameras] = useState<any[]>([]);
+  const [edgeCamerasLoading, setEdgeCamerasLoading] = useState(false);
+
+  // Password reset inline form state
+  const [inlineNewPassword, setInlineNewPassword] = useState('');
+  const [isResettingPassword, setIsResettingPassword] = useState(false);
+
+  /** Mask the password portion of an RTSP URL: rtsp://user:pass@host → rtsp://user:****@host */
+  const maskRtspPassword = (url: string): string => {
+    if (!url) return url;
+    return url.replace(
+      /^(rtsp:\/\/[^:]+):([^@]+)@/,
+      '$1:****@'
+    );
+  };
 
   const showToast = (message: string, type: 'success' | 'error') => {
     setToast({ message, type });
-    setTimeout(() => {
-      setToast(null);
-    }, 3000);
+    setTimeout(() => setToast(null), 3000);
   };
+
+  useEffect(() => {
+    if (initialSelectedClient) {
+      setSelectedClient(initialSelectedClient);
+      setClientTab('overview');
+      if (clearInitialClient) clearInitialClient();
+    }
+  }, [initialSelectedClient]);
 
   const fetchClients = async () => {
     setLoading(true);
@@ -1528,14 +508,41 @@ const ManagementTab = ({
     fetchClients();
   }, []);
 
+  // Fetch edge cameras whenever we switch to the System tab for a FACTORY client
+  useEffect(() => {
+    setEdgeCameras([]);
+    if (!selectedClient || clientTab !== 'system') return;
+    const client = clients.find(c => c.store_id === selectedClient);
+    if (!client || client.plan !== 'FACTORY') return;
+    const apiKey = detailedStore?.api_key || client?.api_key;
+    if (!apiKey) return;
+
+    const fetchEdgeCameras = async () => {
+      setEdgeCamerasLoading(true);
+      try {
+        const res = await fetch(`${API_BASE}/api/edge/config`, {
+          headers: { 'X-API-Key': apiKey }
+        });
+        if (res.ok) {
+          const data = await res.json();
+          setEdgeCameras(data.cameras || []);
+        }
+      } catch (err) {
+        console.error('Failed to load edge cameras', err);
+      } finally {
+        setEdgeCamerasLoading(false);
+      }
+    };
+    fetchEdgeCameras();
+  }, [selectedClient, clientTab, detailedStore]);
+
   useEffect(() => {
     if (!selectedClient) {
       setDetailedStore(null);
-      setDeadTimeLoss(null);
-      setZones([]);
-      setWhatsappLogs([]);
       setRetailFootfall(null);
       setRevealKey(false);
+      setInlineNewPassword('');
+      setEdgeCameras([]);
       return;
     }
     
@@ -1554,45 +561,12 @@ const ManagementTab = ({
     };
     
     fetchStoreDetails();
+    setInlineNewPassword('');
     
     const client = clients.find(c => c.store_id === selectedClient);
     if (!client) return;
     
-    if (client.plan === 'FACTORY') {
-      const fetchDeadTime = async () => {
-        try {
-          const res = await fetch(`${API_BASE}/api/factory/deadtime`, {
-            headers: {
-              'X-Store-ID': selectedClient,
-              'X-Password': 'auris123'
-            }
-          });
-          if (res.ok) {
-            const data = await res.json();
-            setDeadTimeLoss(data);
-          }
-        } catch (err) {
-          console.error("Failed to load dead time metrics", err);
-        }
-      };
-      
-      const fetchZonesList = async () => {
-        try {
-          const res = await fetch(`${API_BASE}/api/factory/zones?store_id=${selectedClient}`, {
-            headers: { 'X-Admin-Key': ADMIN_KEY }
-          });
-          if (res.ok) {
-            const data = await res.json();
-            setZones(data.zones || []);
-          }
-        } catch (err) {
-          console.error("Failed to load factory zones", err);
-        }
-      };
-      
-      fetchDeadTime();
-      fetchZonesList();
-    } else if (client.plan === 'RETAIL') {
+    if (client.plan === 'RETAIL') {
       const fetchFootfall = async () => {
         try {
           const res = await fetch(`${API_BASE}/api/retail/footfall`, {
@@ -1611,30 +585,15 @@ const ManagementTab = ({
       };
       fetchFootfall();
     }
-    
-    const fetchLogs = async () => {
-      try {
-        const res = await fetch(`${API_BASE}/api/whatsapp/logs?store_id=${selectedClient}`, {
-          headers: { 'X-Admin-Key': ADMIN_KEY }
-        });
-        if (res.ok) {
-          const data = await res.json();
-          setWhatsappLogs(data.logs || []);
-        }
-      } catch (err) {
-        console.error("Failed to load WhatsApp logs", err);
-      }
-    };
-    fetchLogs();
-    
   }, [selectedClient, clients]);
 
-  const handleResetPassword = async () => {
-    if (!newPassword) {
-      showToast("Please enter a new password", 'error');
+  const handleResetPasswordInline = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!inlineNewPassword.trim()) {
+      showToast("Password cannot be empty", 'error');
       return;
     }
-    setResettingPassword(true);
+    setIsResettingPassword(true);
     try {
       const res = await fetch(`${API_BASE}/admin/stores/${selectedClient}`, {
         method: 'PATCH',
@@ -1642,73 +601,20 @@ const ManagementTab = ({
           'Content-Type': 'application/json',
           'X-Admin-Key': ADMIN_KEY
         },
-        body: JSON.stringify({ password: newPassword })
+        body: JSON.stringify({ password: inlineNewPassword.trim() })
       });
       if (!res.ok) throw new Error("Failed to reset password");
       showToast("Password updated successfully!", 'success');
-      setNewPassword('');
+      setInlineNewPassword('');
     } catch (err: any) {
       showToast(err.message || "Failed to reset password", 'error');
     } finally {
-      setResettingPassword(false);
-    }
-  };
-
-  const handleToggleSuspend = async () => {
-    const client = clients.find(c => c.store_id === selectedClient);
-    if (!client) return;
-    
-    const newStatus = client.status === 'suspended' ? 'live' : 'suspended';
-    
-    try {
-      if (client.plan === 'FACTORY') {
-        const res = await fetch(`${API_BASE}/api/factory/config`, {
-          method: 'PATCH',
-          headers: {
-            'Content-Type': 'application/json',
-            'X-Admin-Key': ADMIN_KEY
-          },
-          body: JSON.stringify({
-            store_id: selectedClient,
-            status: newStatus
-          })
-        });
-        if (!res.ok) throw new Error("Failed to update status");
-      }
-      
-      setClients(prev => prev.map(c => c.store_id === selectedClient ? { ...c, status: newStatus } : c));
-      showToast(`Client ${newStatus === 'suspended' ? 'suspended' : 'activated'} successfully!`, 'success');
-    } catch (err: any) {
-      showToast(err.message || "Failed to update client status", 'error');
-    }
-  };
-
-  const handleRunAggregationNow = async () => {
-    const client = clients.find(c => c.store_id === selectedClient);
-    if (!client) return;
-
-    try {
-      const res = await fetch(`${API_BASE}/api/factory/aggregate/now`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-Admin-Key': ADMIN_KEY
-        },
-        body: JSON.stringify({
-          store_id: selectedClient
-        })
-      });
-      if (!res.ok) {
-        const errText = await res.text();
-        throw new Error(errText || "Failed to trigger aggregation");
-      }
-      showToast(`Aggregation triggered for ${client.store_name}`, 'success');
-    } catch (err: any) {
-      showToast(err.message || "Failed to trigger aggregation", 'error');
+      setIsResettingPassword(false);
     }
   };
 
   const handleMarkLive = async () => {
+    if (!window.confirm(`Mark ${selectedClientData?.store_name || selectedClient} as LIVE? This will start the 30-day trial.`)) return;
     try {
       const res = await fetch(`${API_BASE}/api/factory/config`, {
         method: 'PATCH',
@@ -1721,17 +627,23 @@ const ManagementTab = ({
           status: 'live'
         })
       });
-      if (!res.ok) throw new Error("Failed to mark factory LIVE");
-      
-      setClients(prev => prev.map(c => c.store_id === selectedClient ? { ...c, status: 'live' } : c));
-      showToast("Factory is now LIVE!", 'success');
+      if (!res.ok) throw new Error("Failed to mark LIVE");
+
+      // Refresh both the client list AND the detail panel
+      await fetchClients();
+      const detailRes = await fetch(`${API_BASE}/admin/stores/${selectedClient}`, {
+        headers: { 'X-Admin-Key': ADMIN_KEY }
+      });
+      if (detailRes.ok) setDetailedStore(await detailRes.json());
+
+      showToast("✅ Client is now LIVE!", 'success');
     } catch (err: any) {
       showToast(err.message || "Failed to mark live", 'error');
     }
   };
 
   const handleDeleteClient = async () => {
-    if (!window.confirm(`Are you absolutely sure you want to delete ${selectedClient}? This will permanently delete all associated edge streams, camera keys, and historical spatial intelligence.`)) {
+    if (!window.confirm(`Are you absolutely sure you want to delete ${selectedClient}? This is permanent.`)) {
       return;
     }
     try {
@@ -1749,105 +661,14 @@ const ManagementTab = ({
     }
   };
 
-  const handleStep1Submit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!addForm.store_id || !addForm.store_name || !addForm.password) {
-      showToast("Please fill in all mandatory fields", 'error');
-      return;
-    }
-    
-    const cleanId = addForm.store_id.trim().toLowerCase().replace(/\s+/g, '_');
-    
-    try {
-      const res = await fetch(`${API_BASE}/admin/stores`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-Admin-Key': ADMIN_KEY
-        },
-        body: JSON.stringify({
-          store_id: cleanId,
-          store_name: addForm.store_name.trim(),
-          password: addForm.password
-        })
-      });
-      
-      if (!res.ok) {
-        const errData = await res.json();
-        throw new Error(errData.detail || "Failed to provision store");
-      }
-      
-      const data = await res.json();
-      setCreatedCredentials({
-        store_id: cleanId,
-        store_name: addForm.store_name.trim(),
-        password: addForm.password,
-        api_key: data.api_key,
-        plan: addForm.plan
-      });
-      
-      showToast("Store provisioned in core index!", 'success');
-      
-      if (addForm.plan === 'FACTORY') {
-        setAddStep(2);
-      } else {
-        setAddStep(4);
-        fetchClients();
-      }
-    } catch (err: any) {
-      showToast(err.message || "Failed to provision store", 'error');
-    }
-  };
-
-  const handleStep2Submit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!addForm.whatsAppNumber) {
-      showToast("WhatsApp alert target number is required", 'error');
-      return;
-    }
-    
-    try {
-      const onboardPayload = {
-        store_id: createdCredentials.store_id,
-        factory_name: createdCredentials.store_name,
-        city: addForm.city || 'Chennai',
-        numShifts: Number(addForm.numShifts),
-        shifts: addForm.shifts.slice(0, Number(addForm.numShifts)),
-        totalHeadcount: 10,
-        operatorWage: Number(addForm.operatorWage),
-        supervisorWage: Number(addForm.supervisorWage),
-        contractorWage: Number(addForm.contractorWage),
-        whatsAppNumber: addForm.whatsAppNumber
-      };
-      
-      const res = await fetch(`${API_BASE}/api/factory/onboard`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-Admin-Key': ADMIN_KEY
-        },
-        body: JSON.stringify(onboardPayload)
-      });
-      
-      if (!res.ok) throw new Error("Failed to onboard factory configuration");
-      
-      showToast("Factory configuration onboarded!", 'success');
-      setNumCameras(1);
-      setCamerasList([{ camera_id: 'cam1', label: '', rtsp_url: '', fps: 2 }]);
-      setAddStep(2.5);
-    } catch (err: any) {
-      showToast(err.message || "Failed to onboard factory", 'error');
-    }
-  };
-
   const handleSaveCameras = async () => {
-    for (const cam of camerasList) {
+    for (const cam of editCamerasList) {
       if (!cam.label.trim()) {
-        showToast(`Label is required for ${cam.camera_id.toUpperCase()}`, 'error');
+        showToast("Label is required for all cameras", 'error');
         return;
       }
       if (!cam.rtsp_url.trim()) {
-        showToast(`RTSP URL is required for ${cam.camera_id.toUpperCase()}`, 'error');
+        showToast("RTSP URL is required for all cameras", 'error');
         return;
       }
     }
@@ -1860,149 +681,21 @@ const ManagementTab = ({
           'X-Admin-Key': ADMIN_KEY
         },
         body: JSON.stringify({
-          store_id: createdCredentials.store_id,
-          cameras: camerasList
+          store_id: selectedClient,
+          cameras: editCamerasList
         })
       });
 
       if (!res.ok) throw new Error("Failed to save camera configuration");
 
       showToast("Camera configuration saved successfully!", 'success');
-      setAddStep(3);
+      setShowEditCamerasModal(false);
+      fetchClients();
     } catch (err: any) {
       showToast(err.message || "Failed to save camera config", 'error');
     }
   };
 
-  const handleUpdateRegistryCameras = async () => {
-    for (const cam of camerasList) {
-      if (!cam.label.trim()) {
-        showToast(`Label is required for ${cam.camera_id.toUpperCase()}`, 'error');
-        return;
-      }
-      if (!cam.rtsp_url.trim()) {
-        showToast(`RTSP URL is required for ${cam.camera_id.toUpperCase()}`, 'error');
-        return;
-      }
-    }
-
-    try {
-      const res = await fetch(`${API_BASE}/api/factory/cameras/update`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-Admin-Key': ADMIN_KEY
-        },
-        body: JSON.stringify({
-          store_id: selectedClientData.store_id,
-          cameras: camerasList
-        })
-      });
-
-      if (!res.ok) throw new Error("Failed to update camera configuration");
-
-      showToast("Registry camera configuration updated!", 'success');
-      setShowEditCamerasModal(false);
-      fetchClients();
-    } catch (err: any) {
-      showToast(err.message || "Failed to update camera config", 'error');
-    }
-  };
-
-  const openEditCamerasModal = () => {
-    const existing = selectedClientData?.factoryConfig?.cameras || [];
-    setNumCameras(existing.length || 1);
-    setCamerasList(existing.length > 0 ? existing : [{ camera_id: 'cam1', label: '', rtsp_url: '', fps: 2 }]);
-    setShowEditCamerasModal(true);
-  };
-
-  const CameraTestButton = ({ rtspUrl, storeId, cameraId }: { rtspUrl: string, storeId: string, cameraId: string }) => {
-    const [testing, setTesting] = useState(false);
-    const [tested, setTested] = useState(false);
-
-    const handleTest = async () => {
-      if (!rtspUrl) {
-        showToast("RTSP URL is required to test connection", 'error');
-        return;
-      }
-      setTesting(true);
-      try {
-        const res = await fetch(`${API_BASE}/api/factory/cameras/test`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'X-Admin-Key': ADMIN_KEY
-          },
-          body: JSON.stringify({ store_id: storeId, camera_id: cameraId, rtsp_url: rtspUrl })
-        });
-        await new Promise(r => setTimeout(r, 850));
-        if (res.ok) {
-          setTested(true);
-          showToast(`Camera ${cameraId} connected successfully!`, 'success');
-        } else {
-          showToast("Connection test failed", 'error');
-        }
-      } catch (err) {
-        showToast("Connection test error", 'error');
-      } finally {
-        setTesting(false);
-      }
-    };
-
-    return (
-      <button
-        type="button"
-        onClick={handleTest}
-        disabled={testing}
-        className={`px-3 py-1 rounded-lg text-[9px] font-mono font-bold uppercase transition-all cursor-pointer border ${
-          tested
-            ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400'
-            : testing
-              ? 'bg-auris-orange/10 border-auris-orange/30 text-auris-orange animate-pulse'
-              : 'bg-white/5 border-white/10 text-white/55 hover:text-white'
-        }`}
-      >
-        {testing ? "Testing..." : tested ? "Connected" : "Test Connection"}
-      </button>
-    );
-  };
-
-  const handleFloorplanUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    
-    const reader = new FileReader();
-    reader.onload = async (evt) => {
-      try {
-        const json = JSON.parse(evt.target?.result as string);
-        const res = await fetch(`${API_BASE}/admin/stores/${createdCredentials.store_id}/config`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'X-Admin-Key': ADMIN_KEY
-          },
-          body: JSON.stringify({
-            zone_config: json.zone_config || {},
-            floors: json.floors || []
-          })
-        });
-        if (!res.ok) throw new Error("Failed to upload configuration map");
-        showToast("Floorplan matrix uploaded successfully!", 'success');
-        setAddStep(4);
-        fetchClients();
-      } catch (err: any) {
-        showToast("Invalid JSON schema or failed to upload: " + err.message, 'error');
-      }
-    };
-    reader.readAsText(file);
-  };
-
-  const handleCopy = (text: string, field: string) => {
-    navigator.clipboard.writeText(text);
-    showToast(`${field} copied to clipboard`, 'success');
-  };
-
-  // Filter clients based on search query
   const filteredClients = clients.filter(c => 
     c.store_name.toLowerCase().includes(searchQuery.toLowerCase()) ||
     c.store_id.toLowerCase().includes(searchQuery.toLowerCase())
@@ -2011,1503 +704,2005 @@ const ManagementTab = ({
   const selectedClientData = clients.find(c => c.store_id === selectedClient);
 
   return (
-    <div className="relative min-h-[calc(100vh-12rem)] text-white p-4 md:p-6 select-none font-sans">
-      
-      {/* Toast Notifications */}
-      <AnimatePresence>
-        {toast && (
-          <motion.div
-            initial={{ opacity: 0, y: -20, scale: 0.95 }}
-            animate={{ opacity: 1, y: 0, scale: 1 }}
-            exit={{ opacity: 0, y: -10, scale: 0.95 }}
-            className="fixed top-6 right-6 z-50 pointer-events-none"
-          >
-            <div className={`p-4 rounded-xl border backdrop-blur-xl shadow-2xl flex items-center gap-3 w-80 bg-black/80 ${
-              toast.type === 'success' 
-                ? 'border-auris-cyan/40 shadow-auris-cyan/10 text-auris-cyan' 
-                : 'border-auris-orange/40 shadow-auris-orange/10 text-auris-orange'
-            }`}>
-              <div className={`w-2 h-2 rounded-full ${toast.type === 'success' ? 'bg-auris-cyan animate-pulse' : 'bg-auris-orange'}`} />
-              <span className="text-[11px] font-mono tracking-wider font-medium text-white/95">{toast.message}</span>
-            </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
-
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6 items-stretch">
-        
-        {/* Left Panel: Client Registry Index */}
-        <div className={`md:col-span-1 flex flex-col gap-4 ${selectedClient ? 'hidden md:flex' : 'flex'}`}>
-          <div className="flex items-center justify-between">
-            <h2 className="text-xs font-display font-light uppercase tracking-widest text-white/70 flex items-center gap-2">
-              <Database className="w-3.5 h-3.5 text-auris-cyan" /> Registry Index
-            </h2>
-            <button 
-              onClick={() => {
-                setAddForm({
-                  store_id: '',
-                  store_name: '',
-                  city: '',
-                  plan: 'FACTORY',
-                  password: '',
-                  numShifts: 2,
-                  shifts: [
-                    { label: 'Day Shift', startTime: '09:00', endTime: '17:00', days: { Mon: true, Tue: true, Wed: true, Thu: true, Fri: true, Sat: true, Sun: false } },
-                    { label: 'Night Shift', startTime: '17:00', endTime: '01:00', days: { Mon: true, Tue: true, Wed: true, Thu: true, Fri: true, Sat: true, Sun: false } }
-                  ],
-                  operatorWage: 120,
-                  supervisorWage: 250,
-                  contractorWage: 180,
-                  whatsAppNumber: ''
-                });
-                setAddStep(1);
-                setShowAddModal(true);
-              }}
-              className="px-3 py-1.5 rounded-lg border border-auris-cyan/30 bg-auris-cyan/5 text-auris-cyan text-[10px] font-mono tracking-wider uppercase font-bold hover:bg-auris-cyan/15 transition-all flex items-center gap-1 cursor-pointer"
-            >
-              <Plus className="w-3.5 h-3.5" /> Onboard New
-            </button>
-          </div>
-
-          <GlassCard className="p-4 flex flex-col gap-4 flex-1 min-h-[500px]">
-            {/* Search Bar */}
-            <div className="relative">
-              <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-white/35" />
-              <input
-                type="text"
-                value={searchQuery}
-                onChange={e => setSearchQuery(e.target.value)}
-                placeholder="FILTER SYSTEM ID / NAME..."
-                className="w-full bg-black/40 border border-white/10 rounded-xl py-2 pl-10 pr-4 text-xs font-mono uppercase tracking-wider text-white placeholder-white/30 focus:border-auris-cyan/40 focus:outline-none transition-colors"
-              />
-            </div>
-
-            {/* List */}
-            <div className="flex-1 overflow-y-auto max-h-[480px] pr-1 space-y-2.5 custom-scrollbar">
-              {loading ? (
-                <div className="h-40 flex items-center justify-center text-white/40 text-[10px] font-mono tracking-widest">
-                  LOADING REGISTRY INDEX...
-                </div>
-              ) : filteredClients.length === 0 ? (
-                <div className="h-40 flex items-center justify-center text-white/35 text-[10px] font-mono tracking-widest text-center px-4">
-                  NO CLIENTS FOUND IN CORE DATASTORE
-                </div>
-              ) : (
-                filteredClients.map((client) => {
-                  const isSelected = selectedClient === client.store_id;
-                  return (
-                    <div
-                      key={client.store_id}
-                      onClick={() => {
-                        setSelectedClient(client.store_id);
-                        setClientTab('overview');
-                      }}
-                      className={`p-3.5 rounded-xl border cursor-pointer transition-all flex flex-col gap-2 relative ${
-                        isSelected 
-                          ? 'bg-white/[0.04] border-auris-cyan/40 shadow-[0_0_15px_rgba(0,255,255,0.06)]' 
-                          : 'bg-black/20 border-white/5 hover:border-white/15'
-                      }`}
-                    >
-                      {/* Laser pointer accent on selected */}
-                      {isSelected && (
-                        <div className="absolute left-0 top-3 bottom-3 w-0.5 bg-auris-cyan rounded-r" />
-                      )}
-
-                      <div className="flex items-start justify-between gap-2">
-                        <div>
-                          <h3 className="text-xs font-display uppercase tracking-wider font-light text-white/90">
-                            {client.store_name}
-                          </h3>
-                          <span className="text-[9px] font-mono opacity-40 uppercase tracking-widest block mt-0.5">
-                            {client.store_id}
-                          </span>
-                        </div>
-                        <span className={`text-[8px] font-mono px-2 py-0.5 rounded font-bold ${
-                          client.plan === 'FACTORY' 
-                            ? 'bg-blue-500/10 border border-blue-500/30 text-blue-400' 
-                            : client.plan === 'RETAIL' 
-                              ? 'bg-emerald-500/10 border border-emerald-500/30 text-emerald-400'
-                              : 'bg-white/5 border border-white/20 text-white/50'
-                        }`}>
-                          {client.plan}
-                        </span>
-                      </div>
-
-                      <div className="flex items-center justify-between text-[8px] font-mono tracking-widest text-white/40 mt-1">
-                        <div className="flex items-center gap-1.5">
-                          <span className="w-1.5 h-1.5 rounded-full bg-auris-cyan animate-pulse" />
-                          <span>EDGE ACTIVE</span>
-                        </div>
-                        <span className={`px-1.5 py-0.2 rounded border uppercase font-medium ${
-                          client.status === 'live'
-                            ? 'border-emerald-500/30 text-emerald-400 bg-emerald-500/5'
-                            : client.status === 'pending'
-                              ? 'border-auris-orange/30 text-auris-orange bg-auris-orange/5'
-                              : 'border-red-500/30 text-red-500 bg-red-500/5'
-                        }`}>
-                          {client.status}
-                        </span>
-                      </div>
-                    </div>
-                  );
-                })
-              )}
-            </div>
-          </GlassCard>
+    <div className="h-full flex flex-col bg-white">
+      {/* Toast Banner */}
+      {toast && (
+        <div className={`fixed top-4 right-4 z-50 p-4 rounded-lg shadow-lg border text-sm font-medium transition-all ${
+          toast.type === 'success' ? 'bg-green-50 border-green-200 text-green-800' : 'bg-red-50 border-red-200 text-red-800'
+        }`}>
+          {toast.message}
         </div>
+      )}
 
-        {/* Right Panel: Selected Client Portal */}
-        <div className={`md:col-span-2 flex flex-col gap-4 ${!selectedClient ? 'hidden md:flex' : 'flex'}`}>
-          <div className="flex items-center gap-3">
-            {selectedClient && (
-              <button 
-                onClick={() => setSelectedClient(null)}
-                className="md:hidden p-1.5 rounded-lg border border-white/10 bg-white/5 hover:bg-white/10 text-white/60 text-xs flex items-center cursor-pointer"
-              >
-                ← Back
-              </button>
-            )}
-            <h2 className="text-xs font-display font-light uppercase tracking-widest text-white/70 flex items-center gap-2">
-              <Users className="w-3.5 h-3.5 text-auris-cyan" /> Core Portal
-            </h2>
-          </div>
-
-          {!selectedClient ? (
-            <GlassCard className="flex-1 flex flex-col items-center justify-center p-12 text-center min-h-[560px]">
-              <div className="w-12 h-12 rounded-full border border-dashed border-white/15 bg-white/5 flex items-center justify-center text-white/30 mb-4 animate-pulse">
-                <Radar className="w-5 h-5" />
-              </div>
-              <h3 className="text-xs font-display uppercase tracking-widest text-white/70">Registry Hub Idle</h3>
-              <p className="text-[10px] text-white/35 max-w-sm mt-2 leading-relaxed">
-                Select a live client from the registry database in Overwatch index to interface with their edge feeds, active zones, live footfall, and WhatsApp brief transaction logs.
-              </p>
-            </GlassCard>
-          ) : (
-            <GlassCard className="flex-1 p-5 flex flex-col gap-5 min-h-[560px]">
-              {/* Client Portal Header */}
-              <div className="flex flex-col md:flex-row md:items-center justify-between border-b border-white/5 pb-4 gap-3">
-                <div>
-                  <h3 className="text-sm font-display uppercase tracking-widest font-light text-white/95 flex items-center gap-2">
-                    {selectedClientData?.store_name}
-                  </h3>
-                  <span className="text-[10px] font-mono text-white/40 block mt-1 uppercase tracking-widest">
-                    SYSTEM ID: {selectedClient} — PLAN: <span className="text-auris-cyan font-bold">{selectedClientData?.plan}</span>
-                  </span>
-                </div>
-                
-                {/* Sub Tab Navigation */}
-                <div className="flex items-center gap-1 bg-black/40 border border-white/5 p-1 rounded-xl w-max max-w-full overflow-x-auto">
-                  {(['overview', 'system', selectedClientData?.plan === 'FACTORY' && 'zones', 'analytics', 'logs'].filter(Boolean) as any[]).map((tab) => (
-                    <button
-                      key={tab}
-                      onClick={() => setClientTab(tab)}
-                      className={`px-3 py-1.5 rounded-lg text-[9px] font-mono tracking-wider uppercase font-bold transition-all cursor-pointer ${
-                        clientTab === tab 
-                          ? 'bg-auris-cyan text-black shadow-lg shadow-auris-cyan/15' 
-                          : 'text-white/40 hover:text-white/70 hover:bg-white/[0.03]'
-                      }`}
-                    >
-                      {tab}
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              {/* Sub Tab Content Area */}
-              <div className="flex-1">
-                
-                {/* 1. OVERVIEW SUB TAB */}
-                {clientTab === 'overview' && (
-                  <div className="space-y-6">
-                    {/* Top Stats Grid */}
-                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-                      <div className="p-3.5 border border-white/5 bg-black/10 rounded-2xl flex flex-col">
-                        <span className="text-[8px] font-mono uppercase tracking-widest text-white/35">Store Name</span>
-                        <span className="text-xs text-white/90 font-medium truncate mt-1">{selectedClientData?.store_name}</span>
-                      </div>
-                      <div className="p-3.5 border border-white/5 bg-black/10 rounded-2xl flex flex-col">
-                        <span className="text-[8px] font-mono uppercase tracking-widest text-white/35">Plan Tier</span>
-                        <span className="text-xs text-auris-cyan font-mono font-bold mt-1 tracking-wider">{selectedClientData?.plan}</span>
-                      </div>
-                      <div className="p-3.5 border border-white/5 bg-black/10 rounded-2xl flex flex-col">
-                        <span className="text-[8px] font-mono uppercase tracking-widest text-white/35">Current Status</span>
-                        <span className="text-xs text-white/90 mt-1 flex items-center gap-1.5 uppercase font-mono tracking-wider font-bold">
-                          <span className={`w-2 h-2 rounded-full ${
-                            selectedClientData?.status === 'live' 
-                              ? 'bg-emerald-500 animate-pulse' 
-                              : selectedClientData?.status === 'pending'
-                                ? 'bg-auris-orange'
-                                : 'bg-red-500'
-                          }`} />
-                          {selectedClientData?.status}
-                        </span>
-                      </div>
-                      <div className="p-3.5 border border-white/5 bg-black/10 rounded-2xl flex flex-col">
-                        <span className="text-[8px] font-mono uppercase tracking-widest text-white/35">Onboard Location</span>
-                        <span className="text-xs text-white/90 font-medium mt-1">{selectedClientData?.factoryConfig?.city || 'Chennai, India'}</span>
-                      </div>
-                    </div>
-
-                    {/* Lower grid: Metadata info & Actions */}
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6 items-stretch">
-                      
-                      {/* Left: Store metadata details */}
-                      <div className="flex flex-col gap-4">
-                        <h4 className="text-[9px] font-mono uppercase tracking-widest text-white/40 border-b border-white/5 pb-2">
-                          Personnel & Spatial Metadata
-                        </h4>
-                        
-                        <div className="space-y-3 text-[10px] font-mono">
-                          <div className="flex justify-between">
-                            <span className="text-white/40">CREATION EPOCH</span>
-                            <span className="text-white/80">{selectedClientData?.created_at ? new Date(selectedClientData.created_at).toLocaleString() : 'N/A'}</span>
-                          </div>
-                          {selectedClientData?.plan === 'FACTORY' && (
-                            <>
-                              <div className="flex justify-between">
-                                <span className="text-white/40">TOTAL SHIFTS</span>
-                                <span className="text-white/80">{selectedClientData?.factoryConfig?.shifts?.length || 2} Active Shifts</span>
-                              </div>
-                              <div className="flex justify-between">
-                                <span className="text-white/40">WHATSAPP BRIEF TARGET</span>
-                                <span className="text-white/80 text-auris-cyan">{selectedClientData?.factoryConfig?.whatsAppNumber || 'None Set'}</span>
-                              </div>
-                            </>
-                          )}
-                          <div className="flex justify-between">
-                            <span className="text-white/40">SPATIAL CALIBRATION</span>
-                            <span className="text-emerald-400">ENABLED & ACTIVE</span>
-                          </div>
-                        </div>
-
-                        {/* Dead Time Cost (Factory only) */}
-                        {selectedClientData?.plan === 'FACTORY' && (
-                          <div className="mt-4 p-4 border border-red-500/15 bg-red-500/5 rounded-2xl">
-                            <div className="flex justify-between items-start">
-                              <div>
-                                <h5 className="text-[8px] font-mono uppercase tracking-widest text-red-400/70">DEAD TIME LOSS (30 DAYS)</h5>
-                                <div className="text-xl font-display font-light text-red-400 mt-1">
-                                  ₹{deadTimeLoss?.summary?.dead_cost_inr ? Math.round(deadTimeLoss.summary.dead_cost_inr).toLocaleString('en-IN') : '2,34,500'}
-                                </div>
-                              </div>
-                              <div className="text-right">
-                                <span className="text-[8px] font-mono uppercase tracking-widest text-white/35 block">DEAD TIME HOURS</span>
-                                <span className="text-xs font-mono font-bold text-white/80 mt-1 block">
-                                  {deadTimeLoss?.summary?.dead_hours_total ? deadTimeLoss.summary.dead_hours_total.toFixed(1) : '18.4'} hrs
-                                </span>
-                              </div>
-                            </div>
-                            <p className="text-[9px] text-white/45 font-sans mt-2.5 leading-relaxed">
-                              {deadTimeLoss?.narrative || 'Analysis: Unproductive work station bottlenecks detected in assembly sectors during night shift intervals. Recommend restructuring floor plan routing.'}
-                            </p>
-                          </div>
-                        )}
-                      </div>
-
-                      {/* Right: Quick actions */}
-                      <div className="flex flex-col gap-4">
-                        <h4 className="text-[9px] font-mono uppercase tracking-widest text-white/40 border-b border-white/5 pb-2">
-                          Quick Management Actions
-                        </h4>
-
-                        <div className="flex flex-col gap-3">
-                          {/* View dashboard */}
-                          <button
-                            onClick={() => onSelectStore(selectedClient)}
-                            className="w-full py-2.5 rounded-xl border border-auris-cyan/30 bg-auris-cyan/5 hover:bg-auris-cyan/15 text-auris-cyan text-[10px] font-mono uppercase font-bold tracking-wider transition-colors cursor-pointer flex items-center justify-center gap-2"
-                          >
-                            <LayoutDashboard className="w-3.5 h-3.5" /> View Overwatch Dashboard
-                          </button>
-
-                          {/* Run Aggregation Now */}
-                          {selectedClientData?.plan === 'FACTORY' && (
-                            <button
-                              onClick={handleRunAggregationNow}
-                              className="w-full py-2.5 rounded-xl border border-auris-cyan/30 bg-auris-cyan/10 hover:bg-auris-cyan/20 text-auris-cyan text-[10px] font-mono uppercase font-bold tracking-wider transition-colors cursor-pointer flex items-center justify-center gap-2"
-                            >
-                              <Play className="w-3.5 h-3.5 animate-pulse" /> Run Aggregation Now
-                            </button>
-                          )}
-
-                          {/* Suspend Toggle */}
-                          <button
-                            onClick={handleToggleSuspend}
-                            className={`w-full py-2.5 rounded-xl border text-[10px] font-mono uppercase font-bold tracking-wider transition-colors cursor-pointer flex items-center justify-center gap-2 ${
-                              selectedClientData?.status === 'suspended'
-                                ? 'border-emerald-500/30 bg-emerald-500/5 hover:bg-emerald-500/15 text-emerald-400'
-                                : 'border-auris-orange/30 bg-auris-orange/5 hover:bg-auris-orange/15 text-auris-orange'
-                            }`}
-                          >
-                            <AlertTriangle className="w-3.5 h-3.5" /> 
-                            {selectedClientData?.status === 'suspended' ? 'Activate Client Stream' : 'Suspend Client Stream'}
-                          </button>
-
-                          {/* Delete */}
-                          <button
-                            onClick={handleDeleteClient}
-                            className="w-full py-2.5 rounded-xl border border-red-500/30 bg-red-500/5 hover:bg-red-500/15 text-red-500 text-[10px] font-mono uppercase font-bold tracking-wider transition-colors cursor-pointer flex items-center justify-center gap-2"
-                          >
-                            <Trash2 className="w-3.5 h-3.5" /> Delete Client
-                          </button>
-
-                          {/* Password reset form */}
-                          <div className="mt-2 border-t border-white/5 pt-4 flex flex-col gap-2">
-                            <span className="text-[8px] font-mono uppercase tracking-widest text-white/30 block mb-1">
-                              RESET CLIENT ACCESS PASSWORD
-                            </span>
-                            <div className="flex gap-2">
-                              <input
-                                type="password"
-                                value={newPassword}
-                                onChange={e => setNewPassword(e.target.value)}
-                                placeholder="ENTER NEW SYSTEM PASSWORD..."
-                                className="flex-1 bg-black/40 border border-white/10 rounded-xl py-2 px-3 text-[10px] font-mono text-white placeholder-white/20 focus:border-auris-cyan/40 focus:outline-none transition-colors"
-                              />
-                              <button
-                                onClick={handleResetPassword}
-                                disabled={resettingPassword}
-                                className="px-4 py-2 rounded-xl border border-white/15 hover:border-auris-cyan bg-white/5 text-white hover:text-auris-cyan text-[10px] font-mono uppercase font-bold tracking-wider transition-all cursor-pointer disabled:opacity-50"
-                              >
-                                {resettingPassword ? 'UPDATING...' : 'RESET'}
-                              </button>
-                            </div>
-                          </div>
-                        </div>
-                      </div>
-
-                    </div>
-                  </div>
-                )}
-
-                {/* 2. SYSTEM SUB TAB */}
-                {clientTab === 'system' && (
-                  <div className="space-y-6">
-                    {/* Edge Device Setup Section */}
-                    <GlassCard className="p-5 border border-white/5 bg-black/30 rounded-2xl space-y-4">
-                      <h3 className="text-xs font-display uppercase tracking-widest text-auris-cyan">
-                        Edge Device Setup
-                      </h3>
-                      
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                        {/* API Key Box */}
-                        <div className="p-3.5 bg-black/25 border border-white/5 rounded-xl space-y-2">
-                          <span className="text-[8px] font-mono uppercase tracking-widest text-white/40 block">
-                            API Key
-                          </span>
-                          <div className="flex items-center gap-2">
-                            <div className="flex-1 bg-black/30 border border-white/10 rounded-xl px-3 py-2 text-xs font-mono select-text truncate">
-                              {revealKey 
-                                ? (detailedStore?.api_key || selectedClientData?.api_key || 'sk_dev_api_key_not_fetched') 
-                                : '••••••••••••••••••••••••••••••••••••••••'}
-                            </div>
-                            <button
-                              onClick={() => setRevealKey(!revealKey)}
-                              className="p-2 border border-white/10 bg-white/5 hover:bg-white/10 rounded-xl text-white/60 hover:text-white transition-all cursor-pointer"
-                              title={revealKey ? "Hide API Key" : "Reveal API Key"}
-                            >
-                              {revealKey ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
-                            </button>
-                            <button
-                              onClick={() => handleCopy(detailedStore?.api_key || selectedClientData?.api_key || '', 'API Key')}
-                              className="p-2 border border-white/10 bg-white/5 hover:bg-white/10 rounded-xl text-white/60 hover:text-white transition-all cursor-pointer"
-                              title="Copy API Key"
-                            >
-                              <Copy className="w-3.5 h-3.5" />
-                            </button>
-                          </div>
-                        </div>
-
-                        {/* Store ID Box */}
-                        <div className="p-3.5 bg-black/25 border border-white/5 rounded-xl space-y-2">
-                          <span className="text-[8px] font-mono uppercase tracking-widest text-white/40 block">
-                            Store ID
-                          </span>
-                          <div className="flex items-center gap-2">
-                            <div className="flex-1 bg-black/30 border border-white/10 rounded-xl px-3 py-2 text-xs font-mono select-text truncate">
-                              {selectedClientData?.store_id || ''}
-                            </div>
-                            <button
-                              onClick={() => handleCopy(selectedClientData?.store_id || '', 'Store ID')}
-                              className="p-2 border border-white/10 bg-white/5 hover:bg-white/10 rounded-xl text-white/60 hover:text-white transition-all cursor-pointer"
-                              title="Copy Store ID"
-                            >
-                              <Copy className="w-3.5 h-3.5" />
-                            </button>
-                          </div>
-                        </div>
-                      </div>
-
-                      {/* Instructions & Status */}
-                      <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 pt-2">
-                        <div className="space-y-1.5">
-                          <span className="text-[9px] font-mono uppercase tracking-widest text-white/50 block font-bold">
-                            Instructions
-                          </span>
-                          <ol className="text-[10px] text-white/65 space-y-1 list-decimal list-inside font-sans">
-                            <li>Connect N100 to factory WiFi</li>
-                            <li>Run: <code className="font-mono text-auris-cyan bg-white/5 px-1 py-0.5 rounded">python3 provision.py</code></li>
-                            <li>Enter the API key above when prompted</li>
-                          </ol>
-                        </div>
-
-                        {/* Status Indicator */}
-                        <div className="flex flex-col items-end">
-                          <span className="text-[8px] font-mono uppercase tracking-widest text-white/35 block mb-1">
-                            Connection Status
-                          </span>
-                          {(() => {
-                            const lastBlob = selectedClientData?.last_blob;
-                            if (!lastBlob) {
-                              return (
-                                <div className="flex items-center gap-2 text-[10px] font-mono text-white/45 bg-white/5 border border-white/10 px-3 py-1.5 rounded-xl">
-                                  <span className="w-2 h-2 rounded-full bg-white/20" />
-                                  <span>○ Not yet connected</span>
-                                </div>
-                              );
-                            }
-                            const diffMs = Date.now() - new Date(lastBlob).getTime();
-                            const diffMins = Math.floor(diffMs / 60000);
-                            if (diffMins < 10) {
-                              const lastSeenStr = diffMins < 1 ? "just now" : `${diffMins} min ago`;
-                              return (
-                                <div className="flex items-center gap-2 text-[10px] font-mono text-emerald-400 bg-emerald-500/5 border border-emerald-500/25 px-3 py-1.5 rounded-xl shadow-[0_0_10px_rgba(16,185,129,0.05)]">
-                                  <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse shadow-[0_0_8px_rgba(16,185,129,0.5)]" />
-                                  <span>● Edge Online — last seen {lastSeenStr}</span>
-                                </div>
-                              );
-                            } else {
-                              return (
-                                <div className="flex items-center gap-2 text-[10px] font-mono text-red-400 bg-red-500/5 border border-red-500/25 px-3 py-1.5 rounded-xl">
-                                  <span className="w-2 h-2 rounded-full bg-red-500" />
-                                  <span>○ Edge Offline</span>
-                                </div>
-                              );
-                            }
-                          })()}
-                        </div>
-                      </div>
-                    </GlassCard>
-
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                      
-                      {/* Left side: Edge device & API Keys */}
-                      <div className="space-y-5">
-                        <h4 className="text-[9px] font-mono uppercase tracking-widest text-white/40 border-b border-white/5 pb-2">
-                          Edge Stream Diagnostics
-                        </h4>
-
-                        <div className="p-4 border border-white/5 bg-black/10 rounded-2xl space-y-4">
-                          <div className="flex justify-between items-center">
-                            <span className="text-[10px] font-mono text-white/45">HEARTBEAT LINK</span>
-                            <span className="px-2 py-0.5 bg-auris-cyan text-black text-[8px] font-mono font-bold rounded">
-                              ONLINE
-                            </span>
-                          </div>
-                          <div className="flex justify-between items-center text-[10px] font-mono">
-                            <span className="text-white/45">LAST FRAME PROCESSED</span>
-                            <span className="text-white/80">2s ago</span>
-                          </div>
-                          <div className="flex justify-between items-center text-[10px] font-mono">
-                            <span className="text-white/45">FPS METRIC BOUNDS</span>
-                            <span className="text-white/80">30.4 fps (Nominal)</span>
-                          </div>
-                          <div className="flex justify-between items-center text-[10px] font-mono">
-                            <span className="text-white/45">ACTIVE INTEL SENSORS</span>
-                            <span className="text-white/80">4 Cameras Configured</span>
-                          </div>
-                        </div>
-
-                        {/* Secret API Key */}
-                        <div className="p-4 border border-white/5 bg-black/10 rounded-2xl space-y-3">
-                          <span className="text-[8px] font-mono uppercase tracking-widest text-white/40 block">
-                            SYSTEM CLOUD API KEY
-                          </span>
-                          
-                          <div className="flex items-center gap-2">
-                            <div className="flex-1 bg-black/30 border border-white/10 rounded-xl px-3 py-2 text-xs font-mono select-text truncate">
-                              {revealKey 
-                                ? (detailedStore?.api_key || 'sk_dev_api_key_not_fetched') 
-                                : '••••••••••••••••••••••••••••••••••••••••••••••••'}
-                            </div>
-                            <button
-                              onClick={() => setRevealKey(!revealKey)}
-                              className="p-2 border border-white/10 bg-white/5 hover:bg-white/10 rounded-xl text-white/60 hover:text-white transition-all cursor-pointer"
-                              title={revealKey ? "Hide API Key" : "Reveal API Key"}
-                            >
-                              {revealKey ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
-                            </button>
-                            <button
-                              onClick={() => handleCopy(detailedStore?.api_key || '', 'API Key')}
-                              className="p-2 border border-white/10 bg-white/5 hover:bg-white/10 rounded-xl text-white/60 hover:text-white transition-all cursor-pointer"
-                              title="Copy API Key"
-                            >
-                              <Copy className="w-3.5 h-3.5" />
-                            </button>
-                          </div>
-                          <p className="text-[8px] text-white/35 leading-relaxed font-sans">
-                            Use this key to authenticate edge streams calling `POST /api/blobs` and local camera heartbeat sensors. Keep it secure.
-                          </p>
-                        </div>
-
-                        {/* Factory Cameras Registry (Factory Plan Only) */}
-                        {selectedClientData?.plan === 'FACTORY' && (
-                          <div className="p-4 border border-white/5 bg-black/10 rounded-2xl space-y-4">
-                            <div className="flex justify-between items-center border-b border-white/5 pb-2">
-                              <span className="text-[8px] font-mono uppercase tracking-widest text-white/40 block font-bold">
-                                FACTORY CAMERAS REGISTRY
-                              </span>
-                              <button
-                                onClick={openEditCamerasModal}
-                                className="px-2.5 py-1 border border-auris-cyan/35 bg-auris-cyan/10 text-auris-cyan hover:bg-auris-cyan/20 rounded-lg text-[9px] font-mono uppercase font-bold tracking-wider transition-all cursor-pointer"
-                              >
-                                Edit Cameras
-                              </button>
-                            </div>
-
-                            <div className="space-y-2 max-h-[220px] overflow-y-auto pr-1 custom-scrollbar">
-                              {!(selectedClientData?.factoryConfig?.cameras?.length) ? (
-                                <p className="text-[9px] font-mono text-white/35 italic">No cameras configured yet.</p>
-                              ) : (
-                                selectedClientData.factoryConfig.cameras.map((cam: any) => (
-                                  <div key={cam.camera_id} className="flex justify-between items-center text-[10px] font-mono p-2.5 bg-black/20 border border-white/5 rounded-xl hover:border-auris-cyan/20 transition-all">
-                                    <div className="flex flex-col gap-0.5">
-                                      <span className="text-white/90 font-bold uppercase">{cam.camera_id}</span>
-                                      <span className="text-[8px] text-white/40">{cam.label}</span>
-                                    </div>
-                                    <div className="text-right flex flex-col items-end gap-0.5 max-w-[65%]">
-                                      <span className="text-auris-cyan text-[9px] font-mono truncate w-full" title={cam.rtsp_url}>{cam.rtsp_url}</span>
-                                      <span className="text-[8px] text-white/45">fps: {cam.fps || 2}</span>
-                                    </div>
-                                  </div>
-                                ))
-                              )}
-                            </div>
-                          </div>
-                        )}
-                      </div>
-
-                      {/* Right side: Shifts Configuration (Factory Only) */}
-                      {selectedClientData?.plan === 'FACTORY' && (
-                        <div className="space-y-4">
-                          <h4 className="text-[9px] font-mono uppercase tracking-widest text-white/40 border-b border-white/5 pb-2">
-                            Shifts & Operational Wage Schedules
-                          </h4>
-
-                          <div className="space-y-3">
-                            <span className="text-[8px] font-mono uppercase tracking-widest text-white/30 block mb-1">
-                              ACTIVE SHIFT ROSTER
-                            </span>
-
-                            {(selectedClientData?.factoryConfig?.shifts || []).map((shift: any, idx: number) => (
-                              <div key={idx} className="p-3 bg-black/20 border border-white/5 rounded-xl flex items-center justify-between text-[10px] font-mono">
-                                <div>
-                                  <span className="font-bold text-white/80">{shift.label}</span>
-                                  <span className="text-white/35 block text-[8px] mt-0.5">
-                                    {Object.keys(shift.days || {}).filter(d => shift.days[d]).join(', ')}
-                                  </span>
-                                </div>
-                                <div className="text-right">
-                                  <span className="text-auris-cyan font-bold">{shift.startTime} - {shift.endTime}</span>
-                                  <span className="text-white/35 block text-[8px] mt-0.5">Duration: 8.0 hrs</span>
-                                </div>
-                              </div>
-                            ))}
-                          </div>
-
-                          <div className="grid grid-cols-3 gap-3 mt-4">
-                            <div className="p-3 bg-black/10 border border-white/5 rounded-xl text-center">
-                              <span className="text-[7px] font-mono text-white/35 block uppercase tracking-wider">OPERATOR RATE</span>
-                              <span className="text-xs font-mono font-bold text-white/80 mt-1 block">₹{selectedClientData?.factoryConfig?.operatorWage || 120}/hr</span>
-                            </div>
-                            <div className="p-3 bg-black/10 border border-white/5 rounded-xl text-center">
-                              <span className="text-[7px] font-mono text-white/35 block uppercase tracking-wider">SUPERVISOR RATE</span>
-                              <span className="text-xs font-mono font-bold text-white/80 mt-1 block">₹{selectedClientData?.factoryConfig?.supervisorWage || 250}/hr</span>
-                            </div>
-                            <div className="p-3 bg-black/10 border border-white/5 rounded-xl text-center">
-                              <span className="text-[7px] font-mono text-white/35 block uppercase tracking-wider">CONTRACTOR RATE</span>
-                              <span className="text-xs font-mono font-bold text-white/80 mt-1 block">₹{selectedClientData?.factoryConfig?.contractorWage || 180}/hr</span>
-                            </div>
-                          </div>
-                        </div>
-                      )}
-
-                    </div>
-                  </div>
-                )}
-
-                {/* 3. ZONES SUB TAB */}
-                {clientTab === 'zones' && selectedClientData?.plan === 'FACTORY' && (
-                  <div className="space-y-6">
-                    <div className="flex items-center justify-between border-b border-white/5 pb-2">
-                      <h4 className="text-[9px] font-mono uppercase tracking-widest text-white/40">
-                        Operational Manufacturing Zone Vectors
-                      </h4>
-                      {selectedClientData?.status === 'pending' && (
-                        <button
-                          onClick={handleMarkLive}
-                          className="px-3 py-1.5 bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 text-[10px] font-mono font-bold tracking-wider uppercase rounded-lg hover:bg-emerald-500/20 transition-all cursor-pointer flex items-center gap-1.5 animate-pulse"
-                        >
-                          <CheckCircle2 className="w-3.5 h-3.5" /> Mark Factory LIVE
-                        </button>
-                      )}
-                    </div>
-
-                    <div className="overflow-x-auto">
-                      <table className="w-full text-left border-collapse text-[10px] font-mono">
-                        <thead>
-                          <tr className="border-b border-white/10 text-white/40 uppercase tracking-widest text-[8px]">
-                            <th className="py-2.5 px-3">ZONE ID</th>
-                            <th className="py-2.5 px-3">ZONE LABEL</th>
-                            <th className="py-2.5 px-3">ZONE TYPE</th>
-                            <th className="py-2.5 px-3">EXPECTED HEADCOUNT</th>
-                            <th className="py-2.5 px-3">DOWNSTREAM DEST</th>
-                            <th className="py-2.5 px-3 text-right">WAGE CAT</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {zones.length === 0 ? (
-                            <tr>
-                              <td colSpan={6} className="py-10 text-center text-white/35 text-[9px] uppercase tracking-widest">
-                                NO FLOORS OR WORKSTATION VECTORS CONFIG FIND IN SPATIAL MAPS
-                              </td>
-                            </tr>
-                          ) : (
-                            zones.map((zone, i) => (
-                              <tr key={i} className="border-b border-white/5 hover:bg-white/[0.02] transition-colors text-white/80">
-                                <td className="py-3 px-3 font-bold text-auris-cyan">{zone.zone_id}</td>
-                                <td className="py-3 px-3">{zone.zone_label || zone.label || 'Assembly Line'}</td>
-                                <td className="py-3 px-3">
-                                  <span className={`px-2 py-0.5 rounded text-[8px] uppercase tracking-wide font-medium ${
-                                    zone.zone_type === 'WORK_STATION'
-                                      ? 'border border-blue-500/20 text-blue-400 bg-blue-500/5'
-                                      : 'border border-white/10 text-white/40'
-                                  }`}>
-                                    {zone.zone_type}
-                                  </span>
-                                </td>
-                                <td className="py-3 px-3 text-center">{zone.expected_headcount || 2} operators</td>
-                                <td className="py-3 px-3 text-white/45">{zone.downstream_zone || 'None'}</td>
-                                <td className="py-3 px-3 text-right text-auris-cyan uppercase">{zone.worker_category || 'OPERATOR'}</td>
-                              </tr>
-                            ))
-                          )}
-                        </tbody>
-                      </table>
-                    </div>
-                  </div>
-                )}
-
-                {/* 4. ANALYTICS SUB TAB */}
-                {clientTab === 'analytics' && (
-                  <div className="space-y-6">
-                    {selectedClientData?.plan === 'FACTORY' ? (
-                      <div className="h-[460px] overflow-y-auto pr-1 space-y-4 custom-scrollbar">
-                        <h4 className="text-[9px] font-mono uppercase tracking-widest text-white/40 border-b border-white/5 pb-2 flex items-center gap-2">
-                          <TrendingUp className="w-3.5 h-3.5 text-auris-cyan animate-pulse" /> Live Factory Spatial Analytics Dashboard
-                        </h4>
-                        
-                        <div className="border border-white/5 rounded-2xl bg-black/10 overflow-hidden">
-                          <FactoryDashboard 
-                            storeId={selectedClient} 
-                            password="auris123" 
-                            factoryName={selectedClientData?.store_name || selectedClient} 
-                            trialDay={30} 
-                          />
-                        </div>
-                      </div>
-                    ) : (
-                      <div className="space-y-5">
-                        <h4 className="text-[9px] font-mono uppercase tracking-widest text-white/40 border-b border-white/5 pb-2">
-                          Retail Space Footfall Analytics
-                        </h4>
-
-                        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-                          <GlassCard className="p-4">
-                            <span className="text-[8px] font-mono uppercase tracking-widest text-white/35 block">TODAY TOTAL INFLOW</span>
-                            <div className="text-2xl font-display font-light text-auris-cyan mt-1">
-                              {retailFootfall?.today_total ? retailFootfall.today_total.toLocaleString() : '842'}
-                            </div>
-                            <span className="text-[8px] font-mono text-emerald-400 mt-1 block tracking-wider font-bold">
-                              +14.2% SINCE LAST EPOCH
-                            </span>
-                          </GlassCard>
-                          <GlassCard className="p-4">
-                            <span className="text-[8px] font-mono uppercase tracking-widest text-white/35 block">PEAK DEMAND HOUR</span>
-                            <div className="text-2xl font-display font-light text-white mt-1">
-                              {retailFootfall?.peak_hour || '04:00 PM'}
-                            </div>
-                            <span className="text-[8px] font-mono text-white/30 mt-1 block">
-                              MAX CONCURRENT LOADS
-                            </span>
-                          </GlassCard>
-                          <GlassCard className="p-4">
-                            <span className="text-[8px] font-mono uppercase tracking-widest text-white/35 block">AVERAGE DWELL TIME</span>
-                            <div className="text-2xl font-display font-light text-white mt-1">
-                              {retailFootfall?.avg_dwell_minutes || '14.5'}
-                            </div>
-                            <span className="text-[8px] font-mono text-white/30 mt-1 block">
-                              ESTIMATED DWELL MINS
-                            </span>
-                          </GlassCard>
-                        </div>
-
-                        <div className="p-4 border border-white/5 bg-black/10 rounded-2xl">
-                          <span className="text-[8px] font-mono uppercase tracking-widest text-white/35 block mb-3">
-                            Hourly Inflow Load Distribution (IST)
-                          </span>
-                          
-                          <div className="h-44 flex items-end gap-2 px-2 border-b border-white/10 pb-1">
-                            {(retailFootfall?.by_hour || [
-                              { hour: 9, in: 24 }, { hour: 10, in: 45 }, { hour: 11, in: 52 }, 
-                              { hour: 12, in: 78 }, { hour: 13, in: 34 }, { hour: 14, in: 61 }, 
-                              { hour: 15, in: 95 }, { hour: 16, in: 124 }, { hour: 17, in: 110 }
-                            ]).map((item: any, i: number) => {
-                              const maxVal = Math.max(...(retailFootfall?.by_hour || [{ in: 124 }]).map((x: any) => x.in), 124);
-                              const heightPct = (item.in / maxVal) * 100;
-                              return (
-                                <div key={i} className="flex-1 flex flex-col items-center gap-1 h-full justify-end group cursor-help">
-                                  <div className="text-[7px] font-mono text-auris-cyan opacity-0 group-hover:opacity-100 transition-opacity">
-                                    {item.in}
-                                  </div>
-                                  <div 
-                                    style={{ height: `${heightPct}%` }} 
-                                    className="w-full bg-auris-cyan/20 border-t-2 border-auris-cyan/60 rounded-t group-hover:bg-auris-cyan/40 transition-colors"
-                                  />
-                                  <span className="text-[7px] font-mono text-white/35 mt-1 block">
-                                    {item.hour}:05
-                                  </span>
-                                </div>
-                              );
-                            })}
-                          </div>
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                )}
-
-                {/* 5. LOGS SUB TAB */}
-                {clientTab === 'logs' && (
-                  <div className="space-y-6">
-                    <h4 className="text-[9px] font-mono uppercase tracking-widest text-white/40 border-b border-white/5 pb-2">
-                      WhatsApp transaction Alert & Daily Brief Logs
-                    </h4>
-
-                    <div className="overflow-x-auto max-h-[380px] custom-scrollbar pr-1">
-                      <table className="w-full text-left border-collapse text-[10px] font-mono">
-                        <thead>
-                          <tr className="border-b border-white/10 text-white/40 uppercase tracking-widest text-[8px]">
-                            <th className="py-2 px-3">SENT AT</th>
-                            <th className="py-2 px-3">MESSAGE TYPE</th>
-                            <th className="py-2 px-3">RECIPIENT NUMBER</th>
-                            <th className="py-2 px-3">MESSAGE PREVIEW</th>
-                            <th className="py-2 px-3 text-right">STATUS</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {whatsappLogs.length === 0 ? (
-                            <tr>
-                              <td colSpan={5} className="py-10 text-center text-white/35 text-[9px] uppercase tracking-widest">
-                                NO TRANSACTION LOGS RECORD IN TWILIO DB BUFFER
-                              </td>
-                            </tr>
-                          ) : (
-                            whatsappLogs.map((log, i) => (
-                              <tr key={i} className="border-b border-white/5 hover:bg-white/[0.02] transition-colors text-white/80">
-                                <td className="py-3 px-3 text-white/45">
-                                  {log.sent_at ? new Date(log.sent_at).toLocaleString() : 'N/A'}
-                                </td>
-                                <td className="py-3 px-3 font-bold text-white/90 uppercase">{log.message_type || 'DAILY_BRIEF'}</td>
-                                <td className="py-3 px-3 text-auris-cyan">{log.to_number || log.recipient}</td>
-                                <td className="py-3 px-3 max-w-xs truncate text-white/60" title={log.message_preview}>
-                                  {log.message_preview}
-                                </td>
-                                <td className="py-3 px-3 text-right">
-                                  <span className={`px-2 py-0.5 rounded text-[8px] uppercase font-bold ${
-                                    log.status === 'delivered' || log.status === 'sent'
-                                      ? 'bg-emerald-500/10 border border-emerald-500/30 text-emerald-400'
-                                      : 'bg-red-500/10 border border-red-500/30 text-red-400 animate-pulse'
-                                  }`}>
-                                    {log.status}
-                                  </span>
-                                </td>
-                              </tr>
-                            ))
-                          )}
-                        </tbody>
-                      </table>
-                    </div>
-                  </div>
-                )}
-
-              </div>
-            </GlassCard>
-          )}
+      <header className="flex justify-between items-center mb-8 pb-4 border-b border-[#E5E7EB]">
+        <div>
+          <h1 className="text-2xl font-bold text-[#111827]">Clients</h1>
+          <p className="text-sm text-[#6B7280]">Registry and workspace management for client configurations.</p>
         </div>
+        <button 
+          onClick={() => {
+            setAddForm({
+              store_id: '',
+              store_name: '',
+              city: '',
+              plan: 'FACTORY',
+              password: '',
+              numShifts: 2,
+              shifts: [
+                { label: 'Day Shift', startTime: '09:00', endTime: '17:00', days: { Mon: true, Tue: true, Wed: true, Thu: true, Fri: true, Sat: true, Sun: false } },
+                { label: 'Night Shift', startTime: '17:00', endTime: '01:00', days: { Mon: true, Tue: true, Wed: true, Thu: true, Fri: true, Sat: true, Sun: false } },
+                { label: 'Third Shift', startTime: '01:00', endTime: '09:00', days: { Mon: true, Tue: true, Wed: true, Thu: true, Fri: true, Sat: true, Sun: false } }
+              ],
+              totalHeadcount: 10,
+              operatorWage: 120,
+              supervisorWage: 250,
+              contractorWage: 180,
+              whatsAppNumber: ''
+            });
+            setAddStep(1);
+            setIsStoreIdAuto(true);
+            setShowAddModal(true);
+          }}
+          className="px-4 py-2 font-medium text-white bg-[#1A3C5E] hover:opacity-90 rounded-lg transition-opacity flex items-center gap-1.5 text-sm"
+        >
+          <Plus className="w-4 h-4" /> Add Client
+        </button>
+      </header>
 
-      </div>
-
-      {/* 4-STEP ONBOARDING WIZARD MODAL */}
-      <AnimatePresence>
-        {showAddModal && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-            
-            {/* Backdrop */}
-            <motion.div 
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              onClick={() => {
-                if (addStep !== 4 && !window.confirm("Abandon onboarding wizard? The provision record will remain unconfigured.")) {
-                  return;
-                }
-                setShowAddModal(false);
-              }}
-              className="absolute inset-0 bg-black/85 backdrop-blur-md"
+      {/* Split Layout */}
+      <div className="flex-1 flex gap-8 min-h-0 overflow-hidden">
+        {/* Left Side Client Selector */}
+        <div className="w-64 flex flex-col border-r border-[#E5E7EB] pr-6 flex-shrink-0">
+          <div className="relative mb-4">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-[#6B7280]" />
+            <input 
+              type="text"
+              value={searchQuery}
+              onChange={e => setSearchQuery(e.target.value)}
+              placeholder="Search clients..."
+              className="w-full pl-9 pr-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:border-[#1A3C5E]"
             />
+          </div>
 
-            {/* Modal Body */}
-            <motion.div
-              initial={{ opacity: 0, scale: 0.9, y: 20 }}
-              animate={{ opacity: 1, scale: 1, y: 0 }}
-              exit={{ opacity: 0, scale: 0.9, y: 10 }}
-              className="relative w-full max-w-lg border border-auris-border bg-auris-card rounded-2xl overflow-hidden shadow-2xl p-6"
-            >
-              <div className="scanline" />
+          <div className="flex-1 overflow-y-auto space-y-1">
+            {filteredClients.map(client => {
+              const isSelected = selectedClient === client.store_id;
+              return (
+                <button
+                  key={client.store_id}
+                  onClick={() => {
+                    setSelectedClient(client.store_id);
+                    setClientTab('overview');
+                  }}
+                  className={`w-full text-left px-3 py-2.5 rounded-lg flex items-center justify-between transition-colors ${
+                    isSelected 
+                      ? 'bg-blue-50 border-l-4 border-[#1A3C5E] font-medium' 
+                      : 'hover:bg-gray-50 border-l-4 border-transparent'
+                  }`}
+                >
+                  <div className="truncate pr-2">
+                    <div className="text-sm font-medium text-[#111827] truncate">{client.store_name}</div>
+                    <div className="text-xs text-[#6B7280] font-mono truncate">{client.store_id}</div>
+                  </div>
+                  <span className={`w-2 h-2 rounded-full flex-shrink-0 ${
+                    client.status === 'live' ? 'bg-[#16A34A]' : 'bg-[#CA8A04]'
+                  }`} />
+                </button>
+              );
+            })}
+          </div>
+        </div>
 
-              {/* Wizard Steps indicator */}
-              <div className="flex items-center justify-between border-b border-white/5 pb-4 mb-5">
-                <div>
-                  <h3 className="text-xs font-display uppercase tracking-widest text-white/90">AURIS System Onboarding</h3>
-                  <span className="text-[9px] font-mono text-white/35 block mt-0.5">Provisioning spatial streams in the core cluster.</span>
-                </div>
-                
-                {/* Steps pills */}
-                <div className="flex items-center gap-1.5 font-mono text-[9px]">
-                  {(addForm.plan === 'FACTORY' ? [1, 2, 2.5, 3, 4] : [1, 4]).map((step) => {
-                    const isPassed = addStep > step;
-                    const isActive = addStep === step;
-                    const label = step === 2.5 ? '2.5' : step.toString();
-                    return (
-                      <div
-                        key={step}
-                        className={`min-w-5 h-5 px-1.5 rounded-full flex items-center justify-center font-bold transition-all ${
-                          isPassed 
-                            ? 'bg-emerald-500 text-black' 
-                            : isActive 
-                              ? 'bg-auris-cyan text-black shadow-lg shadow-auris-cyan/20' 
-                              : 'bg-white/5 border border-white/10 text-white/30'
-                        }`}
-                      >
-                        {isPassed ? '✓' : label}
-                      </div>
-                    );
-                  })}
-                </div>
+        {/* Right Side Client Details */}
+        <div className="flex-1 overflow-y-auto pl-2">
+          {!selectedClient ? (
+            <div className="h-full flex flex-col items-center justify-center text-center p-8 border border-dashed border-gray-200 rounded-lg bg-gray-50">
+              <Users className="w-12 h-12 text-[#6B7280]/40 mb-3" />
+              <h3 className="text-sm font-semibold text-[#111827] uppercase">No Client Selected</h3>
+              <p className="text-xs text-[#6B7280] max-w-xs mt-1">Select a client from the registry listing on the left to view profile and hardware details.</p>
+            </div>
+          ) : (
+            <div className="space-y-6">
+              {/* Tab Navigation */}
+              <div className="flex gap-4 border-b border-[#E5E7EB] pb-px">
+                {(['overview', 'system', 'analytics'] as const).map(tab => (
+                  <button
+                    key={tab}
+                    onClick={() => setClientTab(tab)}
+                    className={`pb-3 text-sm font-semibold uppercase tracking-wider border-b-2 transition-all ${
+                      clientTab === tab 
+                        ? 'border-[#1A3C5E] text-[#1A3C5E]' 
+                        : 'border-transparent text-[#6B7280] hover:text-[#111827]'
+                    }`}
+                  >
+                    {tab}
+                  </button>
+                ))}
               </div>
 
-              {/* STEP 1 FORM: Store Provisioning */}
-              {addStep === 1 && (
-                <form onSubmit={handleStep1Submit} className="space-y-4">
-                  <h4 className="text-[10px] font-mono text-auris-cyan uppercase tracking-widest mb-3">
-                    STEP 1: IDENTITY & LICENSING PROVISIONING
-                  </h4>
-                  
-                  <div className="space-y-3.5">
-                    <div className="flex flex-col gap-1.5">
-                      <label className="text-[8px] font-mono uppercase tracking-widest text-white/40">SYSTEM ID (No Spaces, lowercase)</label>
-                      <input
-                        type="text"
-                        required
-                        value={addForm.store_id}
-                        onChange={e => setAddForm({ ...addForm, store_id: e.target.value })}
-                        placeholder="e.g. factory_chennai_01 or retail_hub_delhi..."
-                        className="bg-black/50 border border-white/10 rounded-xl py-2.5 px-3.5 text-xs font-mono text-white placeholder-white/25 focus:border-auris-cyan/40 focus:outline-none transition-colors"
-                      />
-                    </div>
+              {/* Tab Content */}
+              {clientTab === 'overview' && (
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-8 items-start">
+                  {/* Left Column: Metadata */}
+                  <div className="border border-[#E5E7EB] rounded-lg p-5 bg-white space-y-4">
+                    <h3 className="text-xs font-bold text-[#111827] uppercase tracking-widest border-b border-[#E5E7EB] pb-2">Client Details</h3>
+                    <div className="grid grid-cols-2 gap-y-3 text-sm">
+                      <span className="text-[#6B7280]">Store Name</span>
+                      <span className="font-semibold text-[#111827] text-right">{selectedClientData?.store_name}</span>
 
-                    <div className="flex flex-col gap-1.5">
-                      <label className="text-[8px] font-mono uppercase tracking-widest text-white/40">STORE / FACTORY DISPLAY NAME</label>
-                      <input
-                        type="text"
-                        required
-                        value={addForm.store_name}
-                        onChange={e => setAddForm({ ...addForm, store_name: e.target.value })}
-                        placeholder="e.g. Chennai Assembly Plant #1..."
-                        className="bg-black/50 border border-white/10 rounded-xl py-2.5 px-3.5 text-xs text-white placeholder-white/25 focus:border-auris-cyan/40 focus:outline-none transition-colors"
-                      />
-                    </div>
+                      <span className="text-[#6B7280]">Store ID</span>
+                      <span className="font-mono text-[#111827] text-right">{selectedClientData?.store_id}</span>
 
-                    <div className="flex flex-col gap-1.5">
-                      <label className="text-[8px] font-mono uppercase tracking-widest text-white/40">LOCATION CITY</label>
-                      <input
-                        type="text"
-                        value={addForm.city}
-                        onChange={e => setAddForm({ ...addForm, city: e.target.value })}
-                        placeholder="e.g. Chennai..."
-                        className="bg-black/50 border border-white/10 rounded-xl py-2.5 px-3.5 text-xs text-white placeholder-white/25 focus:border-auris-cyan/40 focus:outline-none transition-colors"
-                      />
-                    </div>
+                      <span className="text-[#6B7280]">Plan</span>
+                      <span className="font-semibold text-[#1A3C5E] text-right">{selectedClientData?.plan}</span>
 
-                    <div className="grid grid-cols-2 gap-4">
-                      <div className="flex flex-col gap-1.5">
-                        <label className="text-[8px] font-mono uppercase tracking-widest text-white/40">PLAN ROUTING SELECT</label>
-                        <div className="flex bg-black/40 border border-white/10 p-0.5 rounded-xl">
-                          {(['FACTORY', 'RETAIL', 'PILOT'] as const).map((plan) => (
-                            <button
-                              key={plan}
-                              type="button"
-                              onClick={() => setAddForm({ ...addForm, plan })}
-                              className={`flex-1 py-2 text-[8px] font-mono tracking-wider font-bold rounded-lg uppercase transition-all cursor-pointer ${
-                                addForm.plan === plan
-                                  ? 'bg-auris-cyan text-black shadow'
-                                  : 'text-white/40 hover:text-white'
-                              }`}
-                            >
-                              {plan}
-                            </button>
-                          ))}
-                        </div>
+                      <span className="text-[#6B7280]">City</span>
+                      <span className="text-[#111827] text-right">{selectedClientData?.factoryConfig?.city || selectedClientData?.city || 'Chennai'}</span>
+
+                      <span className="text-[#6B7280]">Status</span>
+                      <span className="font-semibold text-right flex items-center justify-end gap-1.5">
+                        <span className={`w-2 h-2 rounded-full ${
+                          selectedClientData?.status === 'live' ? 'bg-[#16A34A]' : 'bg-[#CA8A04]'
+                        }`} />
+                        <span className="uppercase text-xs">{selectedClientData?.status || 'Offline'}</span>
+                      </span>
+
+                      <span className="text-[#6B7280]">Trial dates</span>
+                      <span className="text-xs text-[#111827] text-right">
+                        {(() => {
+                          const startStr = selectedClientData?.created_at || selectedClientData?.factoryConfig?.trial_start;
+                          if (!startStr) return 'N/A';
+                          const start = new Date(startStr);
+                          const end = new Date(start.getTime() + 30 * 24 * 60 * 60 * 1000);
+                          return `${start.toLocaleDateString()} - ${end.toLocaleDateString()}`;
+                        })()}
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Right Column: Actions */}
+                  <div className="space-y-6">
+                    {/* Active stacked actions */}
+                    <div className="border border-[#E5E7EB] rounded-lg p-5 bg-white space-y-4">
+                      <h3 className="text-xs font-bold text-[#111827] uppercase tracking-widest border-b border-[#E5E7EB] pb-2">Workspace Actions</h3>
+                      <div className="flex flex-col gap-3">
+                        <button
+                          onClick={() => window.open("https://auris.skymlabs.com", "_blank")}
+                          className="w-full py-2 px-4 bg-[#1A3C5E] text-white font-medium rounded-lg hover:opacity-90 transition-opacity text-sm text-center block"
+                        >
+                          View Client Dashboard
+                        </button>
+                        
+                        {selectedClientData?.plan === 'FACTORY' && (
+                          <button
+                            onClick={handleMarkLive}
+                            className={`w-full py-3 px-4 font-bold rounded-lg text-sm text-center border-2 transition-all flex items-center justify-center gap-2 ${
+                              selectedClientData?.status === 'live'
+                                ? 'border-[#16A34A] bg-[#16A34A] text-white opacity-60 cursor-default'
+                                : 'border-[#16A34A] bg-[#16A34A] text-white hover:bg-[#15803d] shadow-sm hover:shadow-md'
+                            }`}
+                            disabled={selectedClientData?.status === 'live'}
+                          >
+                            <span className="text-base">🚀</span>
+                            {selectedClientData?.status === 'live' ? 'Already Live' : 'Mark as LIVE'}
+                          </button>
+                        )}
+
+                        <button
+                          onClick={handleDeleteClient}
+                          className="w-full py-2 px-4 border border-[#DC2626] text-[#DC2626] font-medium rounded-lg hover:bg-red-50 transition-colors text-sm text-center"
+                        >
+                          Delete Client
+                        </button>
                       </div>
+                    </div>
 
-                      <div className="flex flex-col gap-1.5">
-                        <label className="text-[8px] font-mono uppercase tracking-widest text-white/40">ENCRYPTION / ACCESS KEY</label>
+                    {/* Reset Password Inline Form */}
+                    <div className="border border-[#E5E7EB] rounded-lg p-5 bg-white space-y-4">
+                      <h3 className="text-xs font-bold text-[#111827] uppercase tracking-widest border-b border-[#E5E7EB] pb-2">Reset Password</h3>
+                      <form onSubmit={handleResetPasswordInline} className="space-y-3">
                         <input
                           type="password"
+                          value={inlineNewPassword}
+                          onChange={e => setInlineNewPassword(e.target.value)}
+                          placeholder="Enter new password..."
+                          className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-[#1A3C5E]"
                           required
-                          value={addForm.password}
-                          onChange={e => setAddForm({ ...addForm, password: e.target.value })}
-                          placeholder="PASSWORD IDENTIFIER..."
-                          className="bg-black/50 border border-white/10 rounded-xl py-2.5 px-3.5 text-xs font-mono text-white placeholder-white/25 focus:border-auris-cyan/40 focus:outline-none transition-colors"
                         />
-                      </div>
-                    </div>
-                  </div>
-
-                  <div className="flex justify-end gap-3 pt-5 border-t border-white/5 mt-5">
-                    <button
-                      type="button"
-                      onClick={() => setShowAddModal(false)}
-                      className="px-4 py-2 border border-white/10 hover:border-white/20 bg-white/5 rounded-xl text-white/60 hover:text-white text-[10px] font-mono uppercase font-bold tracking-wider cursor-pointer"
-                    >
-                      Cancel
-                    </button>
-                    <button
-                      type="submit"
-                      className="px-5 py-2 border border-auris-cyan/35 bg-auris-cyan/10 hover:bg-auris-cyan/20 text-auris-cyan rounded-xl text-[10px] font-mono uppercase font-bold tracking-wider cursor-pointer"
-                    >
-                      Provision Client
-                    </button>
-                  </div>
-                </form>
-              )}
-
-              {/* STEP 2 FORM: Factory Configuration (Only Factory Plan) */}
-              {addStep === 2 && (
-                <form onSubmit={handleStep2Submit} className="space-y-4">
-                  <h4 className="text-[10px] font-mono text-auris-cyan uppercase tracking-widest mb-3">
-                    STEP 2: OPERATIONS & SHIFTS CONFIG MATRIX
-                  </h4>
-
-                  <div className="space-y-3.5 max-h-[380px] overflow-y-auto pr-1 custom-scrollbar">
-                    
-                    <div className="grid grid-cols-2 gap-4">
-                      <div className="flex flex-col gap-1.5">
-                        <label className="text-[8px] font-mono uppercase tracking-widest text-white/40">NUMBER OF OPERATIONAL SHIFTS</label>
-                        <select
-                          value={addForm.numShifts}
-                          onChange={e => setAddForm({ ...addForm, numShifts: Number(e.target.value) })}
-                          className="bg-black/50 border border-white/10 rounded-xl py-2 px-3 text-xs font-mono text-white focus:border-auris-cyan/40 focus:outline-none"
-                        >
-                          <option value={1} className="bg-black">1 SHIFT SCHEDULE</option>
-                          <option value={2} className="bg-black">2 SHIFTS SCHEDULE</option>
-                          <option value={3} className="bg-black">3 SHIFTS SCHEDULE</option>
-                        </select>
-                      </div>
-
-                      <div className="flex flex-col gap-1.5">
-                        <label className="text-[8px] font-mono uppercase tracking-widest text-white/40">WHATSAPP TARGET NUMBER</label>
-                        <input
-                          type="text"
-                          required
-                          value={addForm.whatsAppNumber}
-                          onChange={e => setAddForm({ ...addForm, whatsAppNumber: e.target.value })}
-                          placeholder="e.g. +91XXXXXXXXXX..."
-                          className="bg-black/50 border border-white/10 rounded-xl py-2.5 px-3.5 text-xs font-mono text-white placeholder-white/25 focus:border-auris-cyan/40 focus:outline-none transition-colors"
-                        />
-                      </div>
-                    </div>
-
-                    {/* Shifts Details Fields dynamically */}
-                    <div className="space-y-2">
-                      <span className="text-[8px] font-mono uppercase tracking-widest text-white/30 block mb-1">
-                        SHIFT DETAILS (TIME INTERVALS)
-                      </span>
-                      {[...Array(Number(addForm.numShifts))].map((_, i) => (
-                        <div key={i} className="p-3 border border-white/5 bg-black/25 rounded-xl grid grid-cols-3 gap-3">
-                          <div className="flex flex-col gap-1">
-                            <span className="text-[7px] font-mono text-white/40 uppercase">LABEL</span>
-                            <input
-                              type="text"
-                              value={addForm.shifts[i]?.label || `Shift #${i+1}`}
-                              onChange={e => {
-                                const copy = [...addForm.shifts];
-                                if (!copy[i]) copy[i] = { label: '', startTime: '09:00', endTime: '17:00', days: { Mon: true, Tue: true, Wed: true, Thu: true, Fri: true, Sat: true, Sun: false } };
-                                copy[i].label = e.target.value;
-                                setAddForm({ ...addForm, shifts: copy });
-                              }}
-                              className="bg-black border border-white/10 rounded py-1 px-2 text-[10px] text-white focus:outline-none"
-                            />
-                          </div>
-                          <div className="flex flex-col gap-1">
-                            <span className="text-[7px] font-mono text-white/40 uppercase">START TIME</span>
-                            <input
-                              type="text"
-                              value={addForm.shifts[i]?.startTime || '09:00'}
-                              onChange={e => {
-                                const copy = [...addForm.shifts];
-                                if (!copy[i]) copy[i] = { label: `Shift #${i+1}`, startTime: '', endTime: '17:00', days: { Mon: true, Tue: true, Wed: true, Thu: true, Fri: true, Sat: true, Sun: false } };
-                                copy[i].startTime = e.target.value;
-                                setAddForm({ ...addForm, shifts: copy });
-                              }}
-                              className="bg-black border border-white/10 rounded py-1 px-2 text-[10px] font-mono text-white focus:outline-none"
-                            />
-                          </div>
-                          <div className="flex flex-col gap-1">
-                            <span className="text-[7px] font-mono text-white/40 uppercase">END TIME</span>
-                            <input
-                              type="text"
-                              value={addForm.shifts[i]?.endTime || '17:00'}
-                              onChange={e => {
-                                const copy = [...addForm.shifts];
-                                if (!copy[i]) copy[i] = { label: `Shift #${i+1}`, startTime: '09:00', endTime: '', days: { Mon: true, Tue: true, Wed: true, Thu: true, Fri: true, Sat: true, Sun: false } };
-                                copy[i].endTime = e.target.value;
-                                setAddForm({ ...addForm, shifts: copy });
-                              }}
-                              className="bg-black border border-white/10 rounded py-1 px-2 text-[10px] font-mono text-white focus:outline-none"
-                            />
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-
-                    {/* Hourly wages */}
-                    <div className="space-y-2">
-                      <span className="text-[8px] font-mono uppercase tracking-widest text-white/30 block">
-                        HOURLY OPERATION WAGES SCHEDULE (INR)
-                      </span>
-                      <div className="grid grid-cols-3 gap-3">
-                        <div className="flex flex-col gap-1">
-                          <span className="text-[7px] font-mono text-white/45 uppercase">OPERATOR RATE</span>
-                          <input
-                            type="number"
-                            value={addForm.operatorWage}
-                            onChange={e => setAddForm({ ...addForm, operatorWage: Number(e.target.value) })}
-                            className="bg-black border border-white/10 rounded-xl py-2 px-3 text-xs font-mono text-white focus:outline-none text-center"
-                          />
-                        </div>
-                        <div className="flex flex-col gap-1">
-                          <span className="text-[7px] font-mono text-white/45 uppercase">SUPERVISOR RATE</span>
-                          <input
-                            type="number"
-                            value={addForm.supervisorWage}
-                            onChange={e => setAddForm({ ...addForm, supervisorWage: Number(e.target.value) })}
-                            className="bg-black border border-white/10 rounded-xl py-2 px-3 text-xs font-mono text-white focus:outline-none text-center"
-                          />
-                        </div>
-                        <div className="flex flex-col gap-1">
-                          <span className="text-[7px] font-mono text-white/45 uppercase">CONTRACTOR RATE</span>
-                          <input
-                            type="number"
-                            value={addForm.contractorWage}
-                            onChange={e => setAddForm({ ...addForm, contractorWage: Number(e.target.value) })}
-                            className="bg-black border border-white/10 rounded-xl py-2 px-3 text-xs font-mono text-white focus:outline-none text-center"
-                          />
-                        </div>
-                      </div>
-                    </div>
-
-                  </div>
-
-                  <div className="flex justify-end gap-3 pt-5 border-t border-white/5 mt-5">
-                    <button
-                      type="button"
-                      onClick={() => setAddStep(4)}
-                      className="px-4 py-2 border border-white/10 hover:border-white/20 bg-white/5 rounded-xl text-white/60 hover:text-white text-[10px] font-mono uppercase font-bold tracking-wider cursor-pointer"
-                    >
-                      Skip Onboarding
-                    </button>
-                    <button
-                      type="submit"
-                      className="px-5 py-2 border border-auris-cyan/35 bg-auris-cyan/10 hover:bg-auris-cyan/20 text-auris-cyan rounded-xl text-[10px] font-mono uppercase font-bold tracking-wider cursor-pointer"
-                    >
-                      Save Configuration
-                    </button>
-                  </div>
-                </form>
-              )}
-
-              {/* STEP 2.5 FORM: Camera Setup (Only Factory Plan) */}
-              {addStep === 2.5 && (
-                <div className="space-y-4">
-                  <h4 className="text-[10px] font-mono text-auris-cyan uppercase tracking-widest mb-1">
-                    STEP 2.5: CONFIGURE CAMERAS
-                  </h4>
-                  <p className="text-[9px] font-mono text-white/35">
-                    Enter the RTSP URL for each camera on the factory network.
-                  </p>
-
-                  <div className="flex flex-col gap-1.5 mb-4">
-                    <label className="text-[8px] font-mono uppercase tracking-widest text-white/40">NUMBER OF CAMERAS</label>
-                    <div className="flex gap-1.5 flex-wrap">
-                      {[1, 2, 3, 4, 5, 6, 7, 8].map(n => (
                         <button
-                          key={n}
-                          type="button"
-                          onClick={() => handleNumCamerasChange(n)}
-                          className={`px-3 py-1.5 rounded-xl font-mono text-xs cursor-pointer border transition-all ${
-                            numCameras === n
-                              ? 'bg-auris-cyan border-auris-cyan text-black font-bold shadow-md shadow-auris-cyan/15'
-                              : 'bg-white/5 border-white/10 text-white/60 hover:text-white'
-                          }`}
+                          type="submit"
+                          disabled={isResettingPassword}
+                          className="w-full py-2 px-3 border border-gray-200 text-[#374151] bg-white font-medium rounded-lg hover:bg-gray-50 text-xs transition-colors"
                         >
-                          {n}
+                          {isResettingPassword ? "Updating..." : "Save Password"}
                         </button>
-                      ))}
+                      </form>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* 2. SYSTEM TAB */}
+              {clientTab === 'system' && (
+                <div className="space-y-6">
+                  {/* Edge Device Box */}
+                  <div className="border border-[#E5E7EB] rounded-lg p-5 bg-white space-y-4">
+                    <h3 className="text-xs font-bold text-[#111827] uppercase tracking-widest border-b border-[#E5E7EB] pb-2">Edge Device</h3>
+                    <div className="space-y-3 text-sm">
+                      {/* API Key row */}
+                      <div className="flex items-center justify-between border-b border-[#E5E7EB] pb-2.5">
+                        <span className="text-[#6B7280]">API Key</span>
+                        <div className="flex items-center gap-2">
+                          <span className="font-mono text-xs text-[#111827]">
+                            {revealKey 
+                              ? (detailedStore?.api_key || selectedClientData?.api_key || 'sk_dev_api_key_not_fetched') 
+                              : 'sk_••••••••••••••••••••••••••••••••'}
+                          </span>
+                          <button 
+                            onClick={() => setRevealKey(!revealKey)}
+                            className="px-2 py-1 border border-gray-200 text-gray-600 rounded text-xs hover:bg-gray-50"
+                          >
+                            {revealKey ? "Hide" : "Show"}
+                          </button>
+                          <button 
+                            onClick={() => {
+                              navigator.clipboard.writeText(detailedStore?.api_key || selectedClientData?.api_key || '');
+                              showToast("API Key copied!", 'success');
+                            }}
+                            className="px-2 py-1 border border-gray-200 text-gray-600 rounded text-xs hover:bg-gray-50 flex items-center gap-1"
+                          >
+                            <Copy className="w-3 h-3" /> Copy
+                          </button>
+                        </div>
+                      </div>
+
+                      {/* Store ID row */}
+                      <div className="flex items-center justify-between border-b border-[#E5E7EB] pb-2.5">
+                        <span className="text-[#6B7280]">Store ID</span>
+                        <div className="flex items-center gap-2">
+                          <span className="font-mono text-[#111827]">{selectedClientData?.store_id}</span>
+                          <button 
+                            onClick={() => {
+                              navigator.clipboard.writeText(selectedClientData?.store_id || '');
+                              showToast("Store ID copied!", 'success');
+                            }}
+                            className="px-2 py-1 border border-gray-200 text-gray-600 rounded text-xs hover:bg-gray-50 flex items-center gap-1"
+                          >
+                            <Copy className="w-3 h-3" /> Copy
+                          </button>
+                        </div>
+                      </div>
+
+                      {/* Online Status / Last Seen */}
+                      <div className="flex justify-between items-center pt-1">
+                        <span className="text-[#6B7280]">Status</span>
+                        {(() => {
+                          const lastBlob = selectedClientData?.last_blob;
+                          if (!lastBlob) {
+                            return (
+                              <span className="text-gray-500 font-semibold flex items-center gap-1">
+                                <span className="w-2.5 h-2.5 rounded-full bg-gray-400" /> Offline
+                              </span>
+                            );
+                          }
+                          const diffMs = Date.now() - new Date(lastBlob).getTime();
+                          const diffMins = Math.floor(diffMs / 60000);
+                          if (diffMins < 10) {
+                            return (
+                              <span className="text-[#16A34A] font-semibold flex items-center gap-1">
+                                <span className="w-2.5 h-2.5 rounded-full bg-[#16A34A]" /> Online
+                              </span>
+                            );
+                          } else {
+                            return (
+                              <span className="text-[#DC2626] font-semibold flex items-center gap-1">
+                                <span className="w-2.5 h-2.5 rounded-full bg-[#DC2626]" /> Offline (last seen {diffMins} min ago)
+                              </span>
+                            );
+                          }
+                        })()}
+                      </div>
                     </div>
                   </div>
 
-                  <div className="space-y-3.5 max-h-[300px] overflow-y-auto pr-1 custom-scrollbar">
-                    {camerasList.map((cam, idx) => (
-                      <div key={cam.camera_id} className="p-4 border border-white/5 bg-black/25 rounded-2xl space-y-3 animate-in fade-in duration-300">
-                        <div className="flex justify-between items-center text-[10px] font-mono border-b border-white/5 pb-1">
-                          <span className="text-auris-cyan font-bold uppercase">{cam.camera_id.toUpperCase()}</span>
-                          <span className="text-white/35">FPS: 2 (default)</span>
+                  {/* Cameras Box (Factory Only) */}
+                  {selectedClientData?.plan === 'FACTORY' && (
+                    <div className="border border-[#E5E7EB] rounded-lg p-5 bg-white space-y-4">
+                      <div className="flex justify-between items-center border-b border-[#E5E7EB] pb-2">
+                        <div className="flex items-center gap-2">
+                          <h3 className="text-xs font-bold text-[#111827] uppercase tracking-widest">Cameras</h3>
+                          {edgeCamerasLoading && (
+                            <span className="text-xs text-[#6B7280] italic">Loading...</span>
+                          )}
+                          {!edgeCamerasLoading && edgeCameras.length > 0 && (
+                            <span className="text-xs text-[#16A34A] font-medium">{edgeCameras.length} configured</span>
+                          )}
                         </div>
+                        <button
+                          onClick={() => {
+                            const existing = selectedClientData?.factoryConfig?.cameras || [];
+                            setEditCamerasList(existing.length > 0 ? [...existing] : [{ camera_id: 'cam1', label: '', rtsp_url: '', fps: 2 }]);
+                            setShowEditCamerasModal(true);
+                          }}
+                          className="px-3 py-1 border border-[#E5E7EB] text-[#374151] rounded-lg text-xs font-medium hover:bg-gray-50 transition-colors"
+                        >
+                          Edit
+                        </button>
+                      </div>
 
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                          <div className="flex flex-col gap-1">
-                            <span className="text-[7px] font-mono text-white/45 uppercase">LABEL</span>
-                            <input
-                              type="text"
-                              required
-                              value={cam.label}
-                              onChange={e => {
-                                const copy = [...camerasList];
-                                copy[idx].label = e.target.value;
-                                setCamerasList(copy);
-                              }}
-                              placeholder="e.g. Entry Camera"
-                              className="bg-black border border-white/10 rounded-xl py-2 px-3 text-xs text-white placeholder-white/20 focus:outline-none focus:border-auris-cyan/40 transition-colors"
-                            />
+                      <div className="overflow-hidden border border-gray-200 rounded-lg">
+                        <table className="min-w-full divide-y divide-gray-200">
+                          <thead className="bg-[#F8F9FA]">
+                            <tr>
+                              <th className="px-4 py-2.5 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Camera ID</th>
+                              <th className="px-4 py-2.5 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Label</th>
+                              <th className="px-4 py-2.5 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">RTSP URL</th>
+                              <th className="px-4 py-2.5 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Status</th>
+                            </tr>
+                          </thead>
+                          <tbody className="bg-white divide-y divide-gray-200 text-xs">
+                            {edgeCamerasLoading ? (
+                              <tr>
+                                <td colSpan={4} className="px-4 py-4 text-center text-[#6B7280] italic">Fetching camera config from edge device...</td>
+                              </tr>
+                            ) : edgeCameras.length === 0 ? (
+                              <tr>
+                                <td colSpan={4} className="px-4 py-4 text-center text-[#6B7280] italic">No cameras configured. Use Edit to add cameras.</td>
+                              </tr>
+                            ) : (
+                              edgeCameras.map((cam: any) => {
+                                // Determine online status from last_blob data
+                                const lastBlob = selectedClientData?.last_blob;
+                                const diffMins = lastBlob
+                                  ? Math.floor((Date.now() - new Date(lastBlob).getTime()) / 60000)
+                                  : null;
+                                const isOnline = diffMins !== null && diffMins < 10;
+                                return (
+                                  <tr key={cam.camera_id} className="hover:bg-gray-50 transition-colors">
+                                    <td className="px-4 py-3 font-mono font-semibold text-[#111827]">{cam.camera_id}</td>
+                                    <td className="px-4 py-3 text-gray-700">{cam.label || '—'}</td>
+                                    <td className="px-4 py-3 font-mono text-gray-500 max-w-[200px] truncate" title={maskRtspPassword(cam.rtsp_url)}>
+                                      {maskRtspPassword(cam.rtsp_url)}
+                                    </td>
+                                    <td className="px-4 py-3">
+                                      <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-semibold ${
+                                        isOnline
+                                          ? 'bg-green-50 text-[#16A34A]'
+                                          : 'bg-red-50 text-[#DC2626]'
+                                      }`}>
+                                        <span className={`w-1.5 h-1.5 rounded-full ${
+                                          isOnline ? 'bg-[#16A34A]' : 'bg-[#DC2626]'
+                                        }`} />
+                                        {isOnline ? 'Online' : 'Offline'}
+                                      </span>
+                                    </td>
+                                  </tr>
+                                );
+                              })
+                            )}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Configuration Shifts & Wages (Factory Only) */}
+                  {selectedClientData?.plan === 'FACTORY' && (
+                    <div className="border border-[#E5E7EB] rounded-lg p-5 bg-white space-y-4">
+                      <h3 className="text-xs font-bold text-[#111827] uppercase tracking-widest border-b border-[#E5E7EB] pb-2">Configuration</h3>
+                      
+                      <div className="space-y-4">
+                        <div className="space-y-2">
+                          <span className="text-xs font-semibold text-[#6B7280] uppercase tracking-wider block">Shifts</span>
+                          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                            {!(selectedClientData?.factoryConfig?.shifts?.length) ? (
+                              <p className="text-sm text-[#6B7280] italic col-span-3">No shifts configured.</p>
+                            ) : (
+                              selectedClientData.factoryConfig.shifts.map((shift: any, idx: number) => (
+                                <div key={idx} className="p-3 border border-gray-200 rounded-lg text-xs bg-[#F8F9FA]">
+                                  <div className="font-semibold text-gray-800">{shift.label}</div>
+                                  <div className="text-xs font-bold text-[#1A3C5E] mt-1">{shift.startTime} - {shift.endTime}</div>
+                                  <div className="text-[10px] text-[#6B7280] mt-1 uppercase truncate">
+                                    {Object.keys(shift.days || {}).filter(d => shift.days[d]).join(', ')}
+                                  </div>
+                                </div>
+                              ))
+                            )}
                           </div>
+                        </div>
 
-                          <div className="flex flex-col gap-1">
-                            <span className="text-[7px] font-mono text-white/45 uppercase">RTSP URL</span>
-                            <input
-                              type="text"
-                              required
-                              value={cam.rtsp_url}
-                              onChange={e => {
-                                const copy = [...camerasList];
-                                copy[idx].rtsp_url = e.target.value;
-                                setCamerasList(copy);
-                              }}
-                              placeholder="rtsp://admin:password@192.168.1.x:554/stream1"
-                              className="bg-black border border-white/10 rounded-xl py-2 px-3 text-xs font-mono text-white placeholder-white/20 focus:outline-none focus:border-auris-cyan/40 transition-colors"
-                            />
+                        <div className="border-t border-gray-100 pt-3">
+                          <span className="text-xs font-semibold text-[#6B7280] uppercase tracking-wider block mb-2">Wage Rates (₹ INR / Hour)</span>
+                          <div className="grid grid-cols-3 gap-4 text-xs font-mono text-center">
+                            <div className="p-2 border border-gray-200 rounded-lg">
+                              <div className="text-gray-500 uppercase text-[9px] font-semibold">Operator</div>
+                              <div className="font-bold text-gray-800 mt-1">₹{selectedClientData?.factoryConfig?.operatorWage || 120}</div>
+                            </div>
+                            <div className="p-2 border border-gray-200 rounded-lg">
+                              <div className="text-gray-500 uppercase text-[9px] font-semibold">Supervisor</div>
+                              <div className="font-bold text-gray-800 mt-1">₹{selectedClientData?.factoryConfig?.supervisorWage || 250}</div>
+                            </div>
+                            <div className="p-2 border border-gray-200 rounded-lg">
+                              <div className="text-gray-500 uppercase text-[9px] font-semibold">Contractor</div>
+                              <div className="font-bold text-gray-800 mt-1">₹{selectedClientData?.factoryConfig?.contractorWage || 180}</div>
+                            </div>
                           </div>
                         </div>
-
-                        <div className="flex justify-end pt-1">
-                          <CameraTestButton rtspUrl={cam.rtsp_url} storeId={createdCredentials?.store_id} cameraId={cam.camera_id} />
-                        </div>
                       </div>
-                    ))}
-                  </div>
-
-                  <div className="flex justify-end gap-3 pt-5 border-t border-white/5 mt-5">
-                    <button
-                      type="button"
-                      onClick={() => setAddStep(3)}
-                      className="px-4 py-2 border border-white/10 hover:border-white/20 bg-white/5 rounded-xl text-white/60 hover:text-white text-[10px] font-mono uppercase font-bold tracking-wider cursor-pointer"
-                    >
-                      Configure cameras later in Registry
-                    </button>
-                    <button
-                      type="button"
-                      onClick={handleSaveCameras}
-                      className="px-5 py-2 border border-auris-cyan/35 bg-auris-cyan/10 hover:bg-auris-cyan/20 text-auris-cyan rounded-xl text-[10px] font-mono uppercase font-bold tracking-wider cursor-pointer"
-                    >
-                      Save & Continue
-                    </button>
-                  </div>
+                    </div>
+                  )}
                 </div>
               )}
 
-              {/* STEP 3: Floor plan upload */}
-              {addStep === 3 && (
-                <div className="space-y-5 text-center py-6">
-                  <h4 className="text-[10px] font-mono text-auris-cyan uppercase tracking-widest text-left">
-                    STEP 3: CONFIGURATION MATRIX MAPPING & FLOOR PLAN
-                  </h4>
-
-                  <div className="border border-dashed border-white/15 bg-black/25 rounded-2xl p-8 flex flex-col items-center justify-center gap-3">
-                    <FileUp className="w-8 h-8 text-white/20" />
-                    <div>
-                      <h5 className="text-[11px] font-mono text-white/80 font-bold uppercase">Upload JSON floor plan scan</h5>
-                      <p className="text-[9px] text-white/40 mt-1 max-w-xs leading-relaxed">
-                        Attach the parsed scan configuration file (.json) defining physical bounding boxes, cameras mapping, and zone vectors coordinates.
-                      </p>
+              {/* 3. ANALYTICS TAB */}
+              {clientTab === 'analytics' && (
+                <div className="space-y-6">
+                  {selectedClientData?.plan === 'FACTORY' ? (
+                    <div className="border border-[#E5E7EB] rounded-lg bg-white overflow-hidden shadow-sm">
+                      <ErrorBoundary>
+                        <FactoryDashboard 
+                          storeId={selectedClient || ''} 
+                          password="auris123" 
+                          factoryName={selectedClientData?.store_name || selectedClient || ''} 
+                          trialDay={30} 
+                        />
+                      </ErrorBoundary>
                     </div>
-
-                    <label className="px-4 py-2 border border-auris-cyan/30 bg-auris-cyan/5 text-auris-cyan hover:bg-auris-cyan/15 rounded-xl text-[10px] font-mono uppercase font-bold tracking-wider transition-colors cursor-pointer mt-2 block">
-                      Browse Local Files
-                      <input
-                        type="file"
-                        accept=".json"
-                        onChange={handleFloorplanUpload}
-                        className="hidden"
-                      />
-                    </label>
-                  </div>
-
-                  <div className="flex justify-end gap-3 pt-5 border-t border-white/5 mt-5">
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setAddStep(4);
-                        fetchClients();
-                      }}
-                      className="px-5 py-2 border border-auris-cyan/35 bg-auris-cyan/10 hover:bg-auris-cyan/20 text-auris-cyan rounded-xl text-[10px] font-mono uppercase font-bold tracking-wider cursor-pointer"
-                    >
-                      Skip & Done
-                    </button>
-                  </div>
+                  ) : (
+                    <RetailAnalytics storeId={selectedClient || ''} />
+                  )}
                 </div>
               )}
+            </div>
+          )}
+        </div>
+      </div>
 
-              {/* STEP 4: Success credentials display */}
-              {addStep === 4 && (
-                <div className="space-y-5">
-                  <div className="text-center py-4 flex flex-col items-center justify-center gap-2">
-                    <div className="w-10 h-10 rounded-full bg-emerald-500/10 border border-emerald-500/30 flex items-center justify-center text-emerald-400 mb-2">
-                      <Check className="w-5 h-5" />
-                    </div>
-                    <h4 className="text-xs font-display uppercase tracking-widest text-emerald-400 font-bold">CLIENT PORTAL ONBOARD SYNCED</h4>
-                    <p className="text-[9px] text-white/40 max-w-xs mt-1">
-                      Personnel credentials and system encryption keys successfully registered to core database cluster.
-                    </p>
-                  </div>
-
-                  <div className="space-y-3">
-                    <div className="p-3 bg-black/30 border border-white/5 rounded-xl flex items-center justify-between text-[10px] font-mono">
-                      <div>
-                        <span className="text-[7px] text-white/35 uppercase block">CLIENT SYSTEM ID</span>
-                        <span className="text-white/80 font-bold select-all">{createdCredentials?.store_id}</span>
-                      </div>
-                      <button 
-                        onClick={() => handleCopy(createdCredentials?.store_id || '', 'System ID')}
-                        className="p-1.5 border border-white/10 rounded text-white/50 hover:text-white cursor-pointer"
-                      >
-                        <Copy className="w-3.5 h-3.5" />
-                      </button>
-                    </div>
-
-                    <div className="p-3 bg-black/30 border border-white/5 rounded-xl flex items-center justify-between text-[10px] font-mono">
-                      <div>
-                        <span className="text-[7px] text-white/35 uppercase block">ENCRYPTION ACCESS KEY (PASSWORD)</span>
-                        <span className="text-white/80 font-bold select-all">{createdCredentials?.password}</span>
-                      </div>
-                      <button 
-                        onClick={() => handleCopy(createdCredentials?.password || '', 'Password')}
-                        className="p-1.5 border border-white/10 rounded text-white/50 hover:text-white cursor-pointer"
-                      >
-                        <Copy className="w-3.5 h-3.5" />
-                      </button>
-                    </div>
-
-                    <div className="p-3 bg-black/30 border border-white/5 rounded-xl flex items-center justify-between text-[10px] font-mono">
-                      <div className="max-w-[85%]">
-                        <span className="text-[7px] text-white/35 uppercase block">CLOUD STREAM API KEY (SECRET)</span>
-                        <span className="text-auris-cyan font-bold truncate block select-all">{createdCredentials?.api_key}</span>
-                      </div>
-                      <button 
-                        onClick={() => handleCopy(createdCredentials?.api_key || '', 'API Key')}
-                        className="p-1.5 border border-white/10 rounded text-white/50 hover:text-white cursor-pointer"
-                      >
-                        <Copy className="w-3.5 h-3.5" />
-                      </button>
-                    </div>
-                  </div>
-
-                  <p className="text-[8px] text-white/30 leading-relaxed font-sans text-center">
-                    Copy and deliver these credentials securely. Ensure edge processing devices are configured with the secret API Key for streaming data.
-                  </p>
-
-                  <div className="flex justify-center pt-3 border-t border-white/5 mt-5">
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setShowAddModal(false);
-                        fetchClients();
-                      }}
-                      className="px-6 py-2 bg-auris-cyan text-black font-mono uppercase font-bold text-[10px] tracking-wider rounded-xl hover:bg-auris-cyan/85 cursor-pointer shadow-lg shadow-auris-cyan/15"
-                    >
-                      Registry Database Synced
-                    </button>
-                  </div>
-                </div>
-              )}
-
-            </motion.div>
-          </div>
-        )}
-      </AnimatePresence>
-
-      {/* EDIT CAMERAS MODAL */}
-      <AnimatePresence>
-        {showEditCamerasModal && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-            <motion.div 
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              onClick={() => setShowEditCamerasModal(false)}
-              className="absolute inset-0 bg-black/85 backdrop-blur-md"
-            />
-            
-            <motion.div
-              initial={{ opacity: 0, scale: 0.9, y: 20 }}
-              animate={{ opacity: 1, scale: 1, y: 0 }}
-              exit={{ opacity: 0, scale: 0.9, y: 10 }}
-              className="relative w-full max-w-lg border border-auris-border bg-auris-card rounded-2xl overflow-hidden shadow-2xl p-6 z-10"
+      {/* ADD CLIENT MODAL DIALOG (2-Step Wizard) */}
+      {showAddModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 overflow-y-auto">
+          <div className="relative w-full max-w-lg bg-white border border-[#E5E7EB] rounded-lg shadow-xl p-6 my-8">
+            <button 
+              onClick={() => {
+                if (addStep !== 'success' && !window.confirm("Abandon onboarding? Client will not be saved.")) return;
+                setShowAddModal(false);
+              }}
+              className="absolute top-4 right-4 text-gray-400 hover:text-gray-600 text-lg font-bold"
             >
-              <div className="scanline" />
-              
-              <div className="flex items-center justify-between border-b border-white/5 pb-4 mb-5">
-                <div>
-                  <h3 className="text-xs font-display uppercase tracking-widest text-white/90">Edit Cameras Registry</h3>
-                  <span className="text-[9px] font-mono text-white/35 block mt-0.5">
-                    Update RTSP URLs and camera mappings for {selectedClientData?.store_name}
-                  </span>
-                </div>
-                <button 
-                  onClick={() => setShowEditCamerasModal(false)}
-                  className="p-1 border border-white/10 hover:border-white/20 rounded-lg text-white/40 hover:text-white cursor-pointer"
-                >
-                  <XCircle className="w-4 h-4" />
-                </button>
-              </div>
+              ✕
+            </button>
 
-              <div className="space-y-4">
-                <div className="flex flex-col gap-1.5">
-                  <label className="text-[8px] font-mono uppercase tracking-widest text-white/40">NUMBER OF CAMERAS</label>
-                  <div className="flex gap-1.5 flex-wrap">
-                    {[1, 2, 3, 4, 5, 6, 7, 8].map(n => (
-                      <button
-                        key={n}
-                        type="button"
-                        onClick={() => handleNumCamerasChange(n)}
-                        className={`px-3 py-1.5 rounded-xl font-mono text-xs cursor-pointer border transition-all ${
-                          numCameras === n
-                            ? 'bg-auris-cyan border-auris-cyan text-black font-bold shadow-md shadow-auris-cyan/15'
-                            : 'bg-white/5 border-white/10 text-white/60 hover:text-white'
-                        }`}
-                      >
-                        {n}
-                      </button>
-                    ))}
+            <div className="flex items-center justify-between border-b border-[#E5E7EB] pb-3 mb-5">
+              <div>
+                <h3 className="text-base font-bold text-[#111827]">Add New Client</h3>
+                <p className="text-xs text-[#6B7280]">Register and configure a new store instance.</p>
+              </div>
+              
+              {addStep !== 'success' && (
+                <div className="flex gap-1.5 text-xs font-mono font-semibold">
+                  <span className={`w-6 h-6 rounded-full flex items-center justify-center border ${
+                    addStep === 1 ? 'bg-[#1A3C5E] text-white border-[#1A3C5E]' : 'bg-green-15 text-green-700 border-green-200'
+                  }`}>
+                    {addStep > 1 ? '✓' : '1'}
+                  </span>
+                  {addForm.plan === 'FACTORY' && (
+                    <span className={`w-6 h-6 rounded-full flex items-center justify-center border ${
+                      addStep === 2 ? 'bg-[#1A3C5E] text-white border-[#1A3C5E]' : 'bg-gray-50 text-gray-400 border-gray-200'
+                    }`}>
+                      2
+                    </span>
+                  )}
+                </div>
+              )}
+            </div>
+
+            {/* Step 1: Basic credentials */}
+            {addStep === 1 && (
+              <form onSubmit={async (e) => {
+                e.preventDefault();
+                if (!addForm.store_id || !addForm.store_name || !addForm.password) {
+                  showToast("Please fill all fields", 'error');
+                  return;
+                }
+                const cleanId = addForm.store_id.trim().toLowerCase().replace(/\s+/g, '_');
+                try {
+                  const res = await fetch(`${API_BASE}/admin/stores`, {
+                    method: 'POST',
+                    headers: {
+                      'Content-Type': 'application/json',
+                      'X-Admin-Key': ADMIN_KEY
+                    },
+                    body: JSON.stringify({
+                      store_id: cleanId,
+                      store_name: addForm.store_name.trim(),
+                      password: addForm.password
+                    })
+                  });
+                  if (!res.ok) {
+                    const errData = await res.json();
+                    throw new Error(errData.detail || "Failed to create store account");
+                  }
+                  const data = await res.json();
+                  const credentials = {
+                    store_id: cleanId,
+                    store_name: addForm.store_name.trim(),
+                    password: addForm.password,
+                    api_key: data.api_key,
+                    plan: addForm.plan
+                  };
+                  setCreatedCredentials(credentials);
+                  showToast("Store created successfully!", 'success');
+
+                  if (addForm.plan === 'FACTORY') {
+                    setAddStep(2);
+                  } else {
+                    setAddStep('success');
+                    fetchClients();
+                  }
+                } catch (e: any) {
+                  showToast(e.message || "Failed to create client", 'error');
+                }
+              }} className="space-y-4 text-sm text-gray-700">
+                <div className="space-y-1 flex flex-col">
+                  <label className="font-semibold text-gray-800 text-xs">Store Name</label>
+                  <input
+                    type="text"
+                    required
+                    value={addForm.store_name}
+                    onChange={e => {
+                      const val = e.target.value;
+                      setAddForm(prev => ({
+                        ...prev,
+                        store_name: val,
+                        store_id: isStoreIdAuto ? val.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '') : prev.store_id
+                      }));
+                    }}
+                    placeholder="e.g. XYZ Labs Pvt Ltd"
+                    className="border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-[#1A3C5E]"
+                  />
+                </div>
+
+                <div className="space-y-1 flex flex-col">
+                  <label className="font-semibold text-gray-800 text-xs">Store ID</label>
+                  <input
+                    type="text"
+                    required
+                    value={addForm.store_id}
+                    onChange={e => {
+                      setIsStoreIdAuto(false);
+                      setAddForm({ ...addForm, store_id: e.target.value });
+                    }}
+                    placeholder="e.g. xyz_labs"
+                    className="border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-[#1A3C5E] font-mono"
+                  />
+                </div>
+
+                <div className="space-y-1 flex flex-col">
+                  <label className="font-semibold text-gray-800 text-xs">City</label>
+                  <input
+                    type="text"
+                    value={addForm.city}
+                    onChange={e => setAddForm({ ...addForm, city: e.target.value })}
+                    placeholder="e.g. Chennai"
+                    className="border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-[#1A3C5E]"
+                  />
+                </div>
+
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-1 flex flex-col">
+                    <label className="font-semibold text-gray-800 text-xs">Plan</label>
+                    <select
+                      value={addForm.plan}
+                      onChange={e => setAddForm({ ...addForm, plan: e.target.value as any })}
+                      className="border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-[#1A3C5E] bg-white"
+                    >
+                      <option value="FACTORY">FACTORY</option>
+                      <option value="RETAIL">RETAIL</option>
+                      <option value="PILOT">PILOT</option>
+                    </select>
+                  </div>
+
+                  <div className="space-y-1 flex flex-col">
+                    <label className="font-semibold text-gray-800 text-xs">Password</label>
+                    <input
+                      type="password"
+                      required
+                      value={addForm.password}
+                      onChange={e => setAddForm({ ...addForm, password: e.target.value })}
+                      placeholder="Password..."
+                      className="border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-[#1A3C5E] font-mono"
+                    />
                   </div>
                 </div>
 
-                <div className="space-y-3.5 max-h-[300px] overflow-y-auto pr-1 custom-scrollbar">
-                  {camerasList.map((cam, idx) => (
-                    <div key={cam.camera_id} className="p-4 border border-white/5 bg-black/25 rounded-2xl space-y-3 animate-in fade-in duration-300">
-                      <div className="flex justify-between items-center text-[10px] font-mono border-b border-white/5 pb-1">
-                        <span className="text-auris-cyan font-bold uppercase">{cam.camera_id.toUpperCase()}</span>
-                        <span className="text-white/35">FPS: 2 (default)</span>
-                      </div>
-
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                        <div className="flex flex-col gap-1">
-                          <span className="text-[7px] font-mono text-white/45 uppercase">LABEL</span>
-                          <input
-                            type="text"
-                            required
-                            value={cam.label}
-                            onChange={e => {
-                              const copy = [...camerasList];
-                              copy[idx].label = e.target.value;
-                              setCamerasList(copy);
-                            }}
-                            placeholder="e.g. Entry Camera"
-                            className="bg-black border border-white/10 rounded-xl py-2 px-3 text-xs text-white placeholder-white/20 focus:outline-none focus:border-auris-cyan/40"
-                          />
-                        </div>
-
-                        <div className="flex flex-col gap-1">
-                          <span className="text-[7px] font-mono text-white/45 uppercase">RTSP URL</span>
-                          <input
-                            type="text"
-                            required
-                            value={cam.rtsp_url}
-                            onChange={e => {
-                              const copy = [...camerasList];
-                              copy[idx].rtsp_url = e.target.value;
-                              setCamerasList(copy);
-                            }}
-                            placeholder="rtsp://..."
-                            className="bg-black border border-white/10 rounded-xl py-2 px-3 text-xs font-mono text-white placeholder-white/20 focus:outline-none focus:border-auris-cyan/40"
-                          />
-                        </div>
-                      </div>
-
-                      <div className="flex justify-end pt-1">
-                        <CameraTestButton rtspUrl={cam.rtsp_url} storeId={selectedClientData?.store_id || ''} cameraId={cam.camera_id} />
-                      </div>
-                    </div>
-                  ))}
-                </div>
-
-                <div className="flex justify-end gap-3 pt-5 border-t border-white/5 mt-5">
-                  <button
-                    type="button"
-                    onClick={() => setShowEditCamerasModal(false)}
-                    className="px-4 py-2 border border-white/10 hover:border-white/20 bg-white/5 rounded-xl text-white/60 hover:text-white text-[10px] font-mono uppercase font-bold tracking-wider cursor-pointer"
+                <div className="flex justify-end gap-3 pt-4 border-t border-gray-100">
+                  <button 
+                    type="button" 
+                    onClick={() => setShowAddModal(false)}
+                    className="px-4 py-2 border border-gray-200 text-gray-700 bg-white font-medium rounded-lg hover:bg-gray-50 text-xs"
                   >
                     Cancel
                   </button>
-                  <button
-                    type="button"
-                    onClick={handleUpdateRegistryCameras}
-                    className="px-5 py-2 border border-auris-cyan/35 bg-auris-cyan/10 hover:bg-auris-cyan/20 text-auris-cyan rounded-xl text-[10px] font-mono uppercase font-bold tracking-wider cursor-pointer"
+                  <button 
+                    type="submit"
+                    className="px-4 py-2 bg-[#1A3C5E] text-white font-medium rounded-lg hover:opacity-90 text-xs"
                   >
-                    Save Changes
+                    Create Account
+                  </button>
+                </div>
+              </form>
+            )}
+
+            {/* Step 2: Onboard Factory Parameters */}
+            {addStep === 2 && (
+              <form onSubmit={async (e) => {
+                e.preventDefault();
+                try {
+                  const res = await fetch(`${API_BASE}/api/factory/onboard`, {
+                    method: 'POST',
+                    headers: {
+                      'Content-Type': 'application/json',
+                      'X-Admin-Key': ADMIN_KEY
+                    },
+                    body: JSON.stringify({
+                      store_id: createdCredentials.store_id,
+                      factory_name: createdCredentials.store_name,
+                      city: addForm.city || 'Chennai',
+                      numShifts: Number(addForm.numShifts),
+                      shifts: addForm.shifts.slice(0, Number(addForm.numShifts)),
+                      totalHeadcount: Number(addForm.totalHeadcount),
+                      operatorWage: Number(addForm.operatorWage),
+                      supervisorWage: Number(addForm.supervisorWage),
+                      contractorWage: Number(addForm.contractorWage),
+                      whatsAppNumber: addForm.whatsAppNumber
+                    })
+                  });
+                  if (!res.ok) throw new Error("Failed to onboard factory configuration");
+                  
+                  showToast("Factory configuration onboarded!", 'success');
+                  setAddStep('success');
+                  fetchClients();
+                } catch (err: any) {
+                  showToast(err.message || "Failed to onboard factory parameter", 'error');
+                }
+              }} className="space-y-4 text-sm text-gray-700">
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-1 flex flex-col">
+                    <label className="font-semibold text-gray-800 text-xs">Number of Shifts</label>
+                    <select
+                      value={addForm.numShifts}
+                      onChange={e => setAddForm({ ...addForm, numShifts: Number(e.target.value) })}
+                      className="border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-[#1A3C5E] bg-white"
+                    >
+                      <option value={1}>1 Shift</option>
+                      <option value={2}>2 Shifts</option>
+                      <option value={3}>3 Shifts</option>
+                    </select>
+                  </div>
+
+                  <div className="space-y-1 flex flex-col">
+                    <label className="font-semibold text-gray-800 text-xs">WhatsApp Number</label>
+                    <input
+                      type="text"
+                      required
+                      value={addForm.whatsAppNumber}
+                      onChange={e => setAddForm({ ...addForm, whatsAppNumber: e.target.value })}
+                      placeholder="e.g. +919876543210"
+                      className="border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-[#1A3C5E] font-mono"
+                    />
+                  </div>
+                </div>
+
+                <div className="space-y-2 border-t border-gray-100 pt-3">
+                  <label className="font-semibold text-gray-800 text-xs block">Shifts Configuration</label>
+                  {[...Array(addForm.numShifts)].map((_, i) => (
+                    <div key={i} className="p-3 border border-gray-200 rounded-lg space-y-2 bg-[#F8F9FA]">
+                      <div className="grid grid-cols-3 gap-2">
+                        <div>
+                          <label className="text-[10px] text-gray-500 font-semibold block">Label</label>
+                          <input
+                            type="text"
+                            value={addForm.shifts[i]?.label || ''}
+                            onChange={e => {
+                              const copy = [...addForm.shifts];
+                              copy[i].label = e.target.value;
+                              setAddForm({ ...addForm, shifts: copy });
+                            }}
+                            className="w-full border border-gray-200 bg-white rounded px-2 py-1 text-xs"
+                            required
+                          />
+                        </div>
+                        <div>
+                          <label className="text-[10px] text-gray-500 font-semibold block">Start Time</label>
+                          <input
+                            type="text"
+                            value={addForm.shifts[i]?.startTime || ''}
+                            onChange={e => {
+                              const copy = [...addForm.shifts];
+                              copy[i].startTime = e.target.value;
+                              setAddForm({ ...addForm, shifts: copy });
+                            }}
+                            className="w-full border border-gray-200 bg-white rounded px-2 py-1 text-xs font-mono"
+                            required
+                          />
+                        </div>
+                        <div>
+                          <label className="text-[10px] text-gray-500 font-semibold block">End Time</label>
+                          <input
+                            type="text"
+                            value={addForm.shifts[i]?.endTime || ''}
+                            onChange={e => {
+                              const copy = [...addForm.shifts];
+                              copy[i].endTime = e.target.value;
+                              setAddForm({ ...addForm, shifts: copy });
+                            }}
+                            className="w-full border border-gray-200 bg-white rounded px-2 py-1 text-xs font-mono"
+                            required
+                          />
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+
+                <div className="grid grid-cols-2 gap-4 border-t border-gray-100 pt-3">
+                  <div className="space-y-1 flex flex-col">
+                    <label className="font-semibold text-gray-800 text-xs">Total Headcount</label>
+                    <input
+                      type="number"
+                      value={addForm.totalHeadcount}
+                      onChange={e => setAddForm({ ...addForm, totalHeadcount: Number(e.target.value) })}
+                      className="border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-[#1A3C5E]"
+                    />
+                  </div>
+                </div>
+
+                <div className="space-y-2 pt-2">
+                  <label className="font-semibold text-gray-800 text-xs block">Wage Rates (₹ INR / Hr)</label>
+                  <div className="grid grid-cols-3 gap-2">
+                    <div>
+                      <span className="text-[10px] text-gray-500 block">Operator</span>
+                      <input
+                        type="number"
+                        value={addForm.operatorWage}
+                        onChange={e => setAddForm({ ...addForm, operatorWage: Number(e.target.value) })}
+                        className="w-full border border-gray-200 rounded px-2 py-1 text-xs"
+                      />
+                    </div>
+                    <div>
+                      <span className="text-[10px] text-gray-500 block">Supervisor</span>
+                      <input
+                        type="number"
+                        value={addForm.supervisorWage}
+                        onChange={e => setAddForm({ ...addForm, supervisorWage: Number(e.target.value) })}
+                        className="w-full border border-gray-200 rounded px-2 py-1 text-xs"
+                      />
+                    </div>
+                    <div>
+                      <span className="text-[10px] text-gray-500 block">Contractor</span>
+                      <input
+                        type="number"
+                        value={addForm.contractorWage}
+                        onChange={e => setAddForm({ ...addForm, contractorWage: Number(e.target.value) })}
+                        className="w-full border border-gray-200 rounded px-2 py-1 text-xs"
+                      />
+                    </div>
+                  </div>
+                </div>
+
+                <div className="flex justify-end gap-3 pt-4 border-t border-gray-100">
+                  <button 
+                    type="button" 
+                    onClick={() => {
+                      setAddStep('success');
+                      fetchClients();
+                    }}
+                    className="px-4 py-2 border border-gray-200 text-gray-700 bg-white font-medium rounded-lg hover:bg-gray-50 text-xs"
+                  >
+                    Skip Setup
+                  </button>
+                  <button 
+                    type="submit"
+                    className="px-4 py-2 bg-[#1A3C5E] text-white font-medium rounded-lg hover:opacity-90 text-xs"
+                  >
+                    Save & Finish
+                  </button>
+                </div>
+              </form>
+            )}
+
+            {/* Success Done Screen */}
+            {addStep === 'success' && (
+              <div className="space-y-5 text-sm text-gray-700">
+                <div className="text-center py-4 flex flex-col items-center justify-center">
+                  <span className="w-10 h-10 rounded-full bg-green-50 text-[#16A34A] border border-green-200 flex items-center justify-center text-lg font-bold mb-2">✓</span>
+                  <h4 className="font-bold text-[#16A34A] text-base">Client Provisioned successfully!</h4>
+                  <p className="text-xs text-[#6B7280] mt-1 font-mono">Store registered and API keys issued.</p>
+                </div>
+
+                <div className="space-y-3 bg-[#F8F9FA] p-4 border border-gray-200 rounded-lg text-xs space-y-2.5">
+                  <div className="flex justify-between border-b border-gray-100 pb-2">
+                    <span className="text-[#6B7280]">Store ID</span>
+                    <span className="font-mono font-bold text-[#111827] select-all">{createdCredentials?.store_id}</span>
+                  </div>
+                  <div className="flex justify-between border-b border-gray-100 pb-2">
+                    <span className="text-[#6B7280]">Password</span>
+                    <span className="font-mono font-bold text-[#111827] select-all">{createdCredentials?.password}</span>
+                  </div>
+                  <div className="flex justify-between items-center gap-4">
+                    <span className="text-[#6B7280] flex-shrink-0">API Key</span>
+                    <span className="font-mono font-bold text-[#1A3C5E] truncate select-all">{createdCredentials?.api_key}</span>
+                  </div>
+                </div>
+
+                <div className="flex flex-col gap-2 pt-4">
+                  <button
+                    onClick={() => {
+                      const text = `Client Name: ${createdCredentials?.store_name}\nStore ID: ${createdCredentials?.store_id}\nPassword: ${createdCredentials?.password}\nAPI Key: ${createdCredentials?.api_key}`;
+                      navigator.clipboard.writeText(text);
+                      showToast("Credentials copied to clipboard", 'success');
+                    }}
+                    className="w-full py-2.5 bg-white border border-gray-200 text-[#374151] rounded-lg hover:bg-gray-50 transition-colors font-medium text-xs text-center"
+                  >
+                    Copy Credentials
+                  </button>
+                  <button
+                    onClick={() => {
+                      setShowAddModal(false);
+                      fetchClients();
+                    }}
+                    className="w-full py-2.5 bg-[#1A3C5E] text-white rounded-lg hover:opacity-90 transition-opacity font-medium text-xs text-center"
+                  >
+                    Done
                   </button>
                 </div>
               </div>
-            </motion.div>
+            )}
           </div>
-        )}
-      </AnimatePresence>
+        </div>
+      )}
 
+      {/* EDIT CAMERAS MODAL */}
+      {showEditCamerasModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 overflow-y-auto">
+          <div className="relative w-full max-w-lg bg-white border border-[#E5E7EB] rounded-lg shadow-xl p-6 my-8">
+            <button 
+              onClick={() => setShowEditCamerasModal(false)}
+              className="absolute top-4 right-4 text-gray-400 hover:text-gray-600 text-lg font-bold"
+            >
+              ✕
+            </button>
+
+            <div className="border-b border-[#E5E7EB] pb-3 mb-5">
+              <h3 className="text-base font-bold text-[#111827]">Edit Cameras</h3>
+              <p className="text-xs text-[#6B7280]">Update camera labels and RTSP live-stream endpoints.</p>
+            </div>
+
+            <div className="space-y-4 max-h-[40vh] overflow-y-auto pr-1">
+              {editCamerasList.map((cam, idx) => (
+                <div key={idx} className="p-4 border border-gray-200 rounded-lg space-y-3 bg-[#F8F9FA]">
+                  <div className="flex justify-between items-center text-xs font-mono border-b border-gray-100 pb-1.5">
+                    <span className="text-[#1A3C5E] font-bold uppercase">{cam.camera_id || `cam${idx+1}`}</span>
+                    <button
+                      type="button"
+                      onClick={() => setEditCamerasList(prev => prev.filter((_, i) => i !== idx))}
+                      className="text-[#DC2626] font-semibold hover:underline text-xs"
+                    >
+                      Remove
+                    </button>
+                  </div>
+
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-sm text-gray-700">
+                    <div className="space-y-1">
+                      <span className="text-xs font-medium block">Label</span>
+                      <input
+                        type="text"
+                        required
+                        value={cam.label || ''}
+                        onChange={e => {
+                          const copy = [...editCamerasList];
+                          copy[idx].label = e.target.value;
+                          setEditCamerasList(copy);
+                        }}
+                        placeholder="e.g. Lobby 1"
+                        className="w-full border border-gray-200 rounded px-2 py-1.5 text-xs bg-white focus:outline-none"
+                      />
+                    </div>
+
+                    <div className="space-y-1">
+                      <span className="text-xs font-medium block">RTSP URL</span>
+                      <input
+                        type="text"
+                        required
+                        value={cam.rtsp_url || ''}
+                        onChange={e => {
+                          const copy = [...editCamerasList];
+                          copy[idx].rtsp_url = e.target.value;
+                          setEditCamerasList(copy);
+                        }}
+                        placeholder="rtsp://..."
+                        className="w-full border border-gray-200 rounded px-2 py-1.5 text-xs bg-white focus:outline-none font-mono"
+                      />
+                    </div>
+                  </div>
+                </div>
+              ))}
+
+              <button
+                type="button"
+                onClick={() => setEditCamerasList(prev => [
+                  ...prev,
+                  { camera_id: `cam${prev.length + 1}`, label: '', rtsp_url: '', fps: 2 }
+                ])}
+                className="w-full py-2 border border-dashed border-gray-300 text-gray-500 rounded-lg hover:border-[#1A3C5E] hover:text-[#1A3C5E] transition-all text-xs font-semibold text-center flex items-center justify-center gap-1"
+              >
+                <Plus className="w-4 h-4" /> Add Camera
+              </button>
+            </div>
+
+            <div className="flex justify-end gap-3 pt-4 border-t border-gray-100 mt-5">
+              <button 
+                onClick={() => setShowEditCamerasModal(false)}
+                className="px-4 py-2 border border-gray-200 text-gray-700 bg-white font-medium rounded-lg hover:bg-gray-50 text-xs"
+              >
+                Cancel
+              </button>
+              <button 
+                onClick={handleSaveCameras}
+                className="px-4 py-2 bg-[#1A3C5E] text-white font-medium rounded-lg hover:opacity-90 text-xs"
+              >
+                Save Changes
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
 
+// --- MAPPING PAGE ---
+const MappingPage = ({ storeId }: { storeId: string }) => {
+  const [file, setFile] = useState<File | null>(null);
+  const [uploading, setUploading] = useState(false);
+  const [statusMsg, setStatusMsg] = useState('');
+  const [isError, setIsError] = useState(false);
+  const [uploadedPlan, setUploadedPlan] = useState<any>(null);
 
+  const fetchUploadedPlan = async () => {
+    if (!storeId) return;
+    try {
+      const res = await fetch(`${API_BASE}/api/mapping/floorplan?floor_id=floor_0`, {
+        headers: {
+          'X-Store-ID': storeId,
+          'X-Password': 'auris123' // default password fallback
+        }
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setUploadedPlan(data.floorplan || null);
+      } else {
+        setUploadedPlan(null);
+      }
+    } catch (e) {
+      console.error("Failed to load floorplan:", e);
+    }
+  };
 
-// --- MAIN LOGIN ---
+  useEffect(() => {
+    fetchUploadedPlan();
+  }, [storeId]);
+
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.files && e.target.files[0]) {
+      setFile(e.target.files[0]);
+      setStatusMsg('');
+    }
+  };
+
+  const handleUpload = async () => {
+    if (!file) {
+      setStatusMsg("Please select a file first");
+      setIsError(true);
+      return;
+    }
+    if (!storeId) {
+      setStatusMsg("No client store selected. Select a client first.");
+      setIsError(true);
+      return;
+    }
+    setUploading(true);
+    setStatusMsg("Uploading floor plan...");
+    setIsError(false);
+    try {
+      const formData = new FormData();
+      formData.append('file', file);
+      
+      const res = await fetch(`${API_BASE}/api/mapping/floorplan?store_id=${storeId}`, {
+        method: 'POST',
+        body: formData,
+        headers: {
+          'X-Admin-Key': ADMIN_KEY
+        }
+      });
+      const data = await res.json();
+      if (res.ok) {
+        setStatusMsg("Floor plan uploaded successfully!");
+        setIsError(false);
+        setFile(null);
+        fetchUploadedPlan();
+      } else {
+        setStatusMsg(data.detail || "Upload failed");
+        setIsError(true);
+      }
+    } catch (e: any) {
+      setStatusMsg("Network error: failed to upload");
+      setIsError(true);
+    } finally {
+      setUploading(false);
+    }
+  };
+
+  return (
+    <div className="h-full flex flex-col bg-white">
+      <header className="flex justify-between items-center mb-8 pb-4 border-b border-[#E5E7EB]">
+        <div>
+          <h1 className="text-2xl font-bold text-[#111827]">Floor Plans</h1>
+          <p className="text-sm text-[#6B7280]">Ingest and manage 2D RoomPlan or vector representations.</p>
+        </div>
+      </header>
+
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-8 items-start">
+        {/* Upload Card */}
+        <div className="border border-[#E5E7EB] rounded-lg p-6 bg-white shadow-sm space-y-6">
+          <div>
+            <h3 className="text-sm font-semibold text-[#111827] uppercase">Upload Floor Plan</h3>
+            <p className="text-xs text-[#6B7280] mt-1">Accepts .json files exported from Polycam/RoomPlan or .svg vector outlines.</p>
+          </div>
+
+          <div className="border-2 border-dashed border-gray-200 hover:border-[#1A3C5E] transition-colors rounded-lg p-8 flex flex-col items-center justify-center text-center space-y-4">
+            <FileUp className="w-10 h-10 text-[#6B7280]/40" />
+            <div className="space-y-1">
+              <input 
+                type="file" 
+                accept=".json,.svg" 
+                onChange={handleFileChange} 
+                id="file-floorplan"
+                className="hidden" 
+              />
+              <label 
+                htmlFor="file-floorplan"
+                className="cursor-pointer inline-flex items-center px-4 py-2 border border-gray-200 text-[#374151] rounded-lg font-medium text-xs hover:bg-gray-50 transition-colors"
+              >
+                {file ? "Change File" : "Choose File"}
+              </label>
+            </div>
+            {file && (
+              <div className="text-xs font-mono text-gray-700 font-medium">
+                {file.name} ({(file.size / 1024).toFixed(1)} KB)
+              </div>
+            )}
+          </div>
+
+          {statusMsg && (
+            <div className={`p-3 rounded-lg text-xs font-mono border ${
+              isError ? 'bg-red-50 border-red-200 text-[#DC2626]' : 'bg-green-50 border-green-200 text-[#16A34A]'
+            }`}>
+              {statusMsg}
+            </div>
+          )}
+
+          <button 
+            onClick={handleUpload}
+            disabled={uploading || !file}
+            className="w-full py-2.5 bg-[#1A3C5E] text-white font-medium rounded-lg hover:opacity-90 disabled:opacity-50 transition-opacity text-sm text-center"
+          >
+            {uploading ? "Uploading..." : "Upload Floor Plan"}
+          </button>
+        </div>
+
+        {/* Uploaded Plans Info */}
+        <div className="border border-[#E5E7EB] rounded-lg p-6 bg-white shadow-sm space-y-4">
+          <h3 className="text-sm font-semibold text-[#111827] uppercase border-b border-[#E5E7EB] pb-2">Active Floor Plan</h3>
+          
+          {uploadedPlan ? (
+            <div className="space-y-4 text-sm text-gray-700">
+              <div className="grid grid-cols-2 gap-y-3.5">
+                <span className="text-[#6B7280]">Name</span>
+                <span className="font-semibold text-gray-800 text-right">{uploadedPlan.name}</span>
+
+                <span className="text-[#6B7280]">Source</span>
+                <span className="font-mono text-right">{uploadedPlan.map_source}</span>
+
+                <span className="text-[#6B7280]">Updated At</span>
+                <span className="text-xs text-right">{new Date(uploadedPlan.updated_at).toLocaleString()}</span>
+
+                {uploadedPlan.scan_quality && (
+                  <>
+                    <span className="text-[#6B7280]">Area</span>
+                    <span className="font-semibold text-right">{uploadedPlan.scan_quality.area_sq_m} m²</span>
+
+                    <span className="text-[#6B7280]">Wall Count</span>
+                    <span className="font-semibold text-right">{uploadedPlan.scan_quality.wall_count}</span>
+                  </>
+                )}
+              </div>
+
+              {uploadedPlan.scan_quality?.warnings?.length > 0 && (
+                <div className="p-3 border border-yellow-200 bg-yellow-50 rounded-lg text-xs text-[#CA8A04] flex items-start gap-2">
+                  <AlertTriangle className="w-4 h-4 flex-shrink-0 mt-0.5" />
+                  <span>{uploadedPlan.scan_quality.warnings.join(' ')}</span>
+                </div>
+              )}
+            </div>
+          ) : (
+            <div className="py-8 text-center text-[#6B7280] italic text-xs">
+              No floor plan has been uploaded yet for this store workspace.
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+};
+
+// --- CALIBRATION TAB ---
+const CalibrationTab = ({ storeId, password }: { storeId: string; password?: string }) => {
+    const [points, setPoints] = useState<any[]>([]);
+    const [imgUrl, setImgUrl] = useState('https://picsum.photos/seed/calibrate/1200/800');
+    const [cameraId, setCameraId] = useState('');
+    const [calibMsg, setCalibMsg] = useState('');
+    const [cameras, setCameras] = useState<any[]>([]);
+
+    useEffect(() => {
+      const fetchCameras = async () => {
+        if (!storeId) return;
+        try {
+          const res = await fetch(`${API_BASE}/api/factory/cameras`, {
+            headers: {
+              'X-Store-ID': storeId,
+              'X-Password': password || 'test123'
+            }
+          });
+          if (res.ok) {
+            const data = await res.json();
+            if (data && Array.isArray(data.cameras)) {
+              setCameras(data.cameras);
+              if (data.cameras.length > 0) {
+                setCameraId(data.cameras[0].camera_id);
+              }
+            }
+          }
+        } catch (e) {
+          console.error("Failed to fetch cameras in CalibrationTab:", e);
+        }
+      };
+      fetchCameras();
+    }, [storeId, password]);
+
+    const fetchSnapshot = async () => {
+      if (!cameraId) return;
+      try {
+        const res = await fetch(`${API_BASE}/api/calibration/snapshot?store_id=${storeId}&camera_id=${cameraId}`, {
+          headers: {
+            'X-Store-ID': storeId,
+            'X-Password': password || 'test123'
+          }
+        });
+        if (res.ok) {
+          const data = await res.json();
+          if (data && data.full_frame_b64) {
+            setImgUrl(data.full_frame_b64.startsWith('data:') ? data.full_frame_b64 : `data:image/jpeg;base64,${data.full_frame_b64}`);
+          }
+        } else {
+          setImgUrl('https://picsum.photos/seed/calibrate/1200/800');
+        }
+      } catch (e) {
+        setImgUrl('https://picsum.photos/seed/calibrate/1200/800');
+      }
+    };
+
+    useEffect(() => {
+      fetchSnapshot();
+    }, [storeId, cameraId]);
+    
+    const handleCanvasClick = (e: React.MouseEvent) => {
+      if (points.length >= 4) return;
+      const rect = e.currentTarget.getBoundingClientRect();
+      const px = ((e.clientX - rect.left) / rect.width) * 100;
+      const py = ((e.clientY - rect.top) / rect.height) * 100;
+      setPoints([...points, { px, py, xm: 0, ym: 0 }]);
+    };
+
+    const handleSolveHomography = async () => {
+      if (points.length < 4) {
+        setCalibMsg("Please select exactly 4 points.");
+        return;
+      }
+      setCalibMsg("Saving...");
+      try {
+        const payload = {
+          store_id: storeId,
+          camera_id: cameraId,
+          floor_id: 'floor_0',
+          points: points.map((p, idx) => ({
+            px: p.px,
+            py: p.py,
+            x_m: p.xm,
+            y_m: p.ym,
+            label: `GCP_${idx + 1}`
+          }))
+        };
+        const res = await fetch(`${API_BASE}/api/calibration/homography?store_id=${storeId}&camera_id=${cameraId}&floor_id=floor_0`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-Store-ID': storeId,
+            'X-Password': password || 'test123'
+          },
+          body: JSON.stringify(payload)
+        });
+        const data = await res.json();
+        if (res.ok) {
+          setCalibMsg(`Calibration success! RMSE: ${data.rmse_m.toFixed(4)} meters.`);
+        } else {
+          setCalibMsg(`Calibration error: ${data.detail || "Homography matrix singular."}`);
+        }
+      } catch (e) {
+        setCalibMsg("Failed to calibrate camera.");
+      }
+    };
+
+    return (
+      <div className="h-full flex flex-col bg-white">
+        <header className="flex justify-between items-center mb-8 pb-4 border-b border-[#E5E7EB]">
+          <div>
+            <h1 className="text-2xl font-bold text-[#111827]">Calibration</h1>
+            <p className="text-sm text-[#6B7280]">Establish ground-control homography projection maps.</p>
+          </div>
+        </header>
+
+        <div className="flex-1 flex flex-col md:flex-row gap-8 min-h-0 overflow-hidden">
+          {/* Controls column */}
+          <div className="w-80 flex flex-col gap-6 flex-shrink-0 overflow-y-auto">
+            <div className="border border-[#E5E7EB] rounded-lg p-5 bg-white space-y-4">
+              <h3 className="text-xs font-bold text-[#111827] uppercase tracking-widest border-b border-[#E5E7EB] pb-2">Projection Solve</h3>
+              <p className="text-xs text-[#6B7280] italic">Select exactly 4 points on the viewport mapping canvas to bind camera pixels to world meters.</p>
+              
+              <div className="space-y-3">
+                {points.map((p, i) => (
+                  <div key={i} className="p-3 border border-gray-200 rounded-lg text-xs space-y-2.5">
+                    <span className="font-semibold text-[#1A3C5E] uppercase block">Point #{i+1}</span>
+                    <div className="grid grid-cols-2 gap-2 font-mono">
+                      <div>
+                        <label className="text-[10px] text-gray-500 block">World X (m)</label>
+                        <input 
+                          type="number" 
+                          step="0.01"
+                          onChange={e => setPoints(pts => pts.map((pt, idx) => idx === i ? {...pt, xm: Number(e.target.value)} : pt))}
+                          className="w-full border border-gray-200 rounded px-2 py-1 text-xs" 
+                          required
+                        />
+                      </div>
+                      <div>
+                        <label className="text-[10px] text-gray-500 block">World Y (m)</label>
+                        <input 
+                          type="number" 
+                          step="0.01"
+                          onChange={e => setPoints(pts => pts.map((pt, idx) => idx === i ? {...pt, ym: Number(e.target.value)} : pt))}
+                          className="w-full border border-gray-200 rounded px-2 py-1 text-xs" 
+                          required
+                        />
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              <div className="pt-2 flex flex-col gap-2">
+                <button 
+                  onClick={handleSolveHomography}
+                  disabled={points.length < 4}
+                  className="w-full py-2 bg-[#1A3C5E] text-white font-medium rounded-lg hover:opacity-90 disabled:opacity-50 text-xs"
+                >
+                  Solve Homography
+                </button>
+                <button 
+                  onClick={() => { setPoints([]); setCalibMsg(''); }} 
+                  className="w-full text-xs text-[#6B7280] hover:text-[#111827] text-center"
+                >
+                  Clear Points
+                </button>
+              </div>
+
+              {calibMsg && (
+                <div className="p-3 rounded-lg border border-blue-200 bg-blue-50 text-xs font-mono text-blue-700">
+                  {calibMsg}
+                </div>
+              )}
+            </div>
+
+            {/* Cameras Select Registry */}
+            <div className="border border-[#E5E7EB] rounded-lg p-5 bg-white space-y-3">
+              <h3 className="text-xs font-bold text-[#111827] uppercase tracking-widest border-b border-[#E5E7EB] pb-2">Active Nodes</h3>
+              <div className="space-y-1">
+                {cameras.map(c => (
+                  <button
+                    key={c.camera_id}
+                    onClick={() => { setCameraId(c.camera_id); setPoints([]); setCalibMsg(''); }}
+                    className={`w-full text-left px-3 py-2 rounded-lg text-xs font-mono flex items-center justify-between transition-colors ${
+                      cameraId === c.camera_id 
+                        ? 'bg-blue-50 text-[#1A3C5E] font-bold border-l-2 border-[#1A3C5E]' 
+                        : 'hover:bg-gray-50 border-l-2 border-transparent text-gray-700'
+                    }`}
+                  >
+                    <span>{c.camera_id}</span>
+                    <span className="text-[10px] opacity-75">{c.label}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+
+          {/* Viewport canvas column */}
+          <div className="flex-1 border border-[#E5E7EB] rounded-lg overflow-hidden bg-gray-50 relative flex items-center justify-center cursor-crosshair">
+            <div className="relative w-full h-full" onClick={handleCanvasClick}>
+              <img src={imgUrl} className="w-full h-full object-cover" draggable={false} referrerPolicy="no-referrer" />
+              
+              {/* Overlay point markers */}
+              {points.map((p, i) => (
+                <div 
+                  key={i} 
+                  className="absolute -translate-x-1/2 -translate-y-1/2 flex flex-col items-center pointer-events-none" 
+                  style={{ left: `${p.px}%`, top: `${p.py}%` }}
+                >
+                  <span className="w-3.5 h-3.5 rounded-full bg-[#1A3C5E] border-2 border-white shadow-md block" />
+                  <span className="mt-1 bg-black/85 text-white font-mono text-[9px] px-1.5 py-0.5 rounded border border-white/20 whitespace-nowrap block">
+                    GCP_{i+1}: {p.xm}m, {p.ym}m
+                  </span>
+                </div>
+              ))}
+
+              <span className="absolute bottom-4 left-4 bg-black/60 text-white font-mono text-xs px-3 py-1 rounded">
+                Node ID: {cameraId || "NO ACTIVE NODE"}
+              </span>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+};
+
+// --- TRAINING TAB ---
+const TrainingTab = () => {
+  const [cases, setCases] = useState<any[]>([]);
+  const [currentIndex, setCurrentIndex] = useState(0);
+  const [loading, setLoading] = useState(true);
+  const [exportMsg, setExportMsg] = useState('');
+  const [stats, setStats] = useState({ hard_cases: 0, hard_cases_pending: 0, pseudo_labels: 0 });
+
+  const fetchCases = async () => {
+    try {
+      const res = await fetch(`${API_BASE}/api/training/hard-cases`, {
+        headers: { 'X-Admin-Key': ADMIN_KEY }
+      });
+      const data = await res.json();
+      if (data && Array.isArray(data.cases)) {
+        setCases(data.cases);
+      }
+      
+      const statRes = await fetch(`${API_BASE}/api/training/stats`, {
+        headers: { 'X-Admin-Key': ADMIN_KEY }
+      });
+      const statData = await statRes.json();
+      setStats(statData);
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchCases();
+  }, []);
+
+  const handleReview = async (action: 'approve' | 'reject') => {
+    if (!cases[currentIndex]) return;
+    const caseId = cases[currentIndex]._id;
+    try {
+      const res = await fetch(`${API_BASE}/api/training/review`, {
+        method: 'POST',
+        headers: { 
+          'Content-Type': 'application/json',
+          'X-Admin-Key': ADMIN_KEY
+        },
+        body: JSON.stringify({ case_id: caseId, action })
+      });
+      if (res.ok) {
+        setCurrentIndex(v => v + 1);
+        setStats(prev => ({
+          ...prev,
+          hard_cases_pending: Math.max(prev.hard_cases_pending - 1, 0)
+        }));
+      }
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
+  const handleExport = async () => {
+    setExportMsg("Exporting...");
+    try {
+      const res = await fetch(`${API_BASE}/api/training/export-yolo`, {
+        method: 'POST',
+        headers: { 'X-Admin-Key': ADMIN_KEY }
+      });
+      const data = await res.json();
+      if (res.ok) {
+        setExportMsg(`Export complete! YOLOv8 Manifest: ${data.approved_hard_cases} Cases, ${data.pseudo_labels} Pseudo Labels.`);
+      }
+    } catch (e) {
+      setExportMsg("Export pipeline error.");
+    }
+  };
+
+  if (loading) {
+    return (
+      <div className="h-full flex items-center justify-center text-sm text-[#6B7280]">
+        <RefreshCw className="w-6 h-6 animate-spin mr-2 text-[#1A3C5E]" /> Loading active training cases...
+      </div>
+    );
+  }
+
+  const currentCase = cases[currentIndex];
+
+  return (
+    <div className="h-full flex flex-col bg-white">
+      <header className="flex justify-between items-center mb-8 pb-4 border-b border-[#E5E7EB]">
+        <div>
+          <h1 className="text-2xl font-bold text-[#111827]">Active Learning</h1>
+          <p className="text-sm text-[#6B7280]">Review low-confidence anomaly frames for model retraining.</p>
+        </div>
+        <button 
+          onClick={handleExport}
+          className="px-4 py-2 font-medium text-[#1A3C5E] border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors flex items-center gap-1.5 text-xs bg-white"
+        >
+          <Database className="w-4 h-4" /> Export YOLO Dataset
+        </button>
+      </header>
+
+      {exportMsg && (
+        <div className="mb-6 p-4 rounded-lg bg-green-50 border border-green-200 text-xs font-mono text-green-700">
+          {exportMsg}
+        </div>
+      )}
+
+      <div className="flex-1 flex flex-col items-center justify-center max-w-2xl mx-auto space-y-6 w-full">
+        <div className="grid grid-cols-2 gap-12 w-full text-center pb-4">
+          <div>
+            <span className="text-[10px] uppercase font-bold text-[#6B7280] tracking-wider">Cases Pending</span>
+            <span className="text-2xl font-bold block mt-1 text-[#111827]">{stats.hard_cases_pending}</span>
+          </div>
+          <div>
+            <span className="text-[10px] uppercase font-bold text-[#6B7280] tracking-wider">Model Core</span>
+            <span className="text-2xl font-bold block mt-1 text-[#1A3C5E]">YOLOv8-Auris</span>
+          </div>
+        </div>
+
+        {!currentCase ? (
+          <div className="border border-gray-200 rounded-lg p-8 text-center max-w-md w-full bg-white shadow-sm space-y-4">
+            <ShieldCheck className="w-12 h-12 text-[#16A34A] mx-auto" />
+            <h3 className="text-base font-bold text-gray-800 uppercase">Review Completed</h3>
+            <p className="text-xs text-[#6B7280]">All flagged system drifts and anomalies have been resolved and categorized.</p>
+          </div>
+        ) : (
+          <div className="w-full space-y-4">
+            <div className="border border-gray-200 rounded-lg overflow-hidden relative aspect-video bg-gray-50 flex items-center justify-center shadow-sm">
+              <img 
+                src={currentCase.crop_b64.startsWith('data:') ? currentCase.crop_b64 : `data:image/jpeg;base64,${currentCase.crop_b64}`}
+                className="w-full h-full object-contain"
+                referrerPolicy="no-referrer"
+              />
+              <span className="absolute bottom-4 left-4 bg-black/60 text-white font-mono text-xs px-3 py-1 rounded">
+                Node ID: {currentCase.camera_id} | Confidence: {(Number(currentCase.confidence) * 100).toFixed(1)}%
+              </span>
+            </div>
+
+            <div className="flex gap-4">
+              <button 
+                onClick={() => handleReview('reject')}
+                className="flex-1 py-3 border border-[#DC2626] text-[#DC2626] rounded-lg hover:bg-red-50 transition-colors font-semibold text-xs flex items-center justify-center gap-1.5 bg-white"
+              >
+                <XCircle className="w-4 h-4" /> Reject Label
+              </button>
+              <button 
+                onClick={() => handleReview('approve')}
+                className="flex-1 py-3 bg-[#1A3C5E] text-white rounded-lg hover:opacity-90 transition-opacity font-semibold text-xs flex items-center justify-center gap-1.5"
+              >
+                <CheckCircle2 className="w-4 h-4" /> Approve Label
+              </button>
+            </div>
+
+            <div className="w-full bg-gray-100 h-2 rounded-full overflow-hidden">
+              <div 
+                className="h-full bg-[#1A3C5E]" 
+                style={{ width: `${(currentIndex / Math.max(cases.length, 1)) * 100}%` }}
+              />
+            </div>
+            <div className="text-center font-mono text-xs text-[#6B7280]">
+              {currentIndex + 1} of {cases.length} cases reviewed
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+};
+
+// --- REPORT TAB ---
+const ReportTab = ({ storeId, password }: { storeId: string; password?: string }) => {
+  const [loading, setLoading] = useState(false);
+  const [report, setReport] = useState<string>('');
+  const [generatedAt, setGeneratedAt] = useState<string>('');
+  const [deadtimeData, setDeadtimeData] = useState<any>(null);
+
+  const fetchReport = async () => {
+    setLoading(true);
+    try {
+      const res = await fetch(`${API_BASE}/api/report`, {
+        headers: {
+          'X-Store-ID': storeId,
+          'X-Password': password || 'test123'
+        }
+      });
+      const data = await res.json();
+      if (data && data.report) {
+        setReport(data.report);
+        setGeneratedAt(data.generated_at);
+      }
+      
+      const dtRes = await fetch(`${API_BASE}/api/factory/deadtime`, {
+        headers: {
+          'X-Store-ID': storeId,
+          'X-Password': password || 'test123'
+        }
+      });
+      if (dtRes.ok) {
+        const dtData = await dtRes.json();
+        setDeadtimeData(dtData);
+      }
+    } catch (e) {
+      console.error(e);
+      setReport("Connection failed: could not load report.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchReport();
+  }, [storeId, password]);
+
+  const handlePrint = () => window.print();
+
+  return (
+    <div className="h-full flex flex-col bg-white">
+      <header className="flex justify-between items-center mb-8 pb-4 border-b border-[#E5E7EB]">
+        <div>
+          <h1 className="text-2xl font-bold text-[#111827]">Reports</h1>
+          <p className="text-sm text-[#6B7280]">Factory floor operations intelligence report summaries.</p>
+        </div>
+        <div className="flex gap-2">
+          <button 
+            className="p-2 border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors bg-white text-[#6B7280]" 
+            onClick={fetchReport}
+          >
+            <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
+          </button>
+          <button 
+            className="px-4 py-2 font-medium text-white bg-[#1A3C5E] hover:opacity-90 rounded-lg transition-opacity text-xs" 
+            onClick={handlePrint}
+          >
+            Download PDF
+          </button>
+        </div>
+      </header>
+
+      {loading ? (
+        <div className="flex-grow flex items-center justify-center text-sm text-[#6B7280]">
+          <RefreshCw className="w-6 h-6 animate-spin mr-2 text-[#1A3C5E]" /> Generating spatial intelligence summaries...
+        </div>
+      ) : (
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-8 items-start">
+          {/* Main Sheet */}
+          <div className="md:col-span-2 border border-[#E5E7EB] rounded-lg p-8 bg-white shadow-sm space-y-6">
+            <div className="flex items-center gap-2 border-b border-gray-100 pb-3">
+              <FileText className="w-5 h-5 text-[#1A3C5E]" />
+              <h3 className="text-xs font-bold text-[#111827] uppercase tracking-widest">Executive Summary</h3>
+            </div>
+            
+            <p className="text-sm leading-relaxed text-[#374151] font-sans border-l-4 border-[#1A3C5E] pl-4 whitespace-pre-wrap">
+              {report || "No data recorded."}
+            </p>
+
+            <div className="pt-6 border-t border-gray-100 flex gap-12 text-xs">
+              <div>
+                <span className="text-[#6B7280] block font-semibold uppercase tracking-wider text-[10px]">Client</span>
+                <span className="font-mono text-gray-800 font-bold block mt-1">{storeId.toUpperCase()}</span>
+              </div>
+              <div>
+                <span className="text-[#6B7280] block font-semibold uppercase tracking-wider text-[10px]">Generated At</span>
+                <span className="text-gray-800 block mt-1">
+                  {generatedAt ? new Date(generatedAt).toLocaleString() : 'N/A'}
+                </span>
+              </div>
+            </div>
+          </div>
+
+          {/* Right Metrics panel */}
+          <div className="space-y-6">
+            <div className="border border-[#E5E7EB] rounded-lg p-5 bg-white shadow-sm space-y-4">
+              <h3 className="text-xs font-bold text-[#111827] uppercase tracking-widest border-b border-[#E5E7EB] pb-2">Idle Time Cost Impact</h3>
+              
+              {!deadtimeData || !deadtimeData.by_zone || deadtimeData.by_zone.length === 0 ? (
+                <div className="text-center py-6 text-[#6B7280] italic text-xs">
+                  Sufficient spatial telemetry available after Day 7 of deployment.
+                </div>
+              ) : (
+                deadtimeData.by_zone.slice(0, 3).map((z: any, idx: number) => (
+                  <div key={idx} className="p-3 border border-gray-200 rounded-lg text-xs bg-[#F8F9FA]">
+                    <div className="font-semibold text-gray-500 uppercase tracking-wider text-[9px]">{z.zone_label || z.zone_id}</div>
+                    <div className="text-lg font-bold text-[#CA8A04] mt-1">{z.dead_hours.toFixed(1)} hours idle</div>
+                    <div className="text-xs text-[#DC2626] font-bold mt-1">Cost Impact: ₹{Math.round(z.dead_cost_inr).toLocaleString('en-IN')}</div>
+                  </div>
+                ))
+              )}
+            </div>
+
+            <div className="border border-[#E5E7EB] rounded-lg p-5 bg-white shadow-sm space-y-3">
+              <h3 className="text-xs font-bold text-[#111827] uppercase tracking-widest border-b border-[#E5E7EB] pb-2">Action Items</h3>
+              <div className="space-y-3 text-xs text-[#374151]">
+                <div className="flex items-start gap-2.5">
+                  <span className="w-1.5 h-1.5 rounded-full bg-[#1A3C5E] mt-1.5 flex-shrink-0" />
+                  <span>Review homography solves on Node Lobby 4 due to pixel scale variations.</span>
+                </div>
+                <div className="flex items-start gap-2.5">
+                  <span className="w-1.5 h-1.5 rounded-full bg-[#1A3C5E] mt-1.5 flex-shrink-0" />
+                  <span>Verify wage matrix calculations in system parameters.</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
+
+// --- FACTORY PAGE (FactoryOnboardingView checklist) ---
+const FactoryOnboardingView = ({ storeId: initialStoreId }: { storeId: string | null }) => {
+  const [stores, setStores] = useState<any[]>([]);
+  const [configs, setConfigs] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [isModalOpen, setIsModalOpen] = useState(false);
+  const [selectedOnboardStore, setSelectedOnboardStore] = useState('');
+  const [successMsg, setSuccessMsg] = useState('');
+  const [errorMsg, setErrorMsg] = useState('');
+
+  const fetchData = async () => {
+    setLoading(true);
+    try {
+      const resStores = await fetch(`${API_BASE}/admin/stores`, {
+        headers: { 'X-Admin-Key': ADMIN_KEY }
+      });
+      const dataStores = await resStores.json();
+      
+      const factoryStores = (dataStores.stores || []).filter((s: any) => 
+        s.store_id.includes('factory') || s.spatial_status === 'factory' || s.plan === 'FACTORY'
+      );
+      setStores(factoryStores);
+
+      const resConfigs = await fetch(`${API_BASE}/api/factory/configs`, {
+        headers: { 'X-Admin-Key': ADMIN_KEY }
+      });
+      const dataConfigs = await resConfigs.json();
+      setConfigs(dataConfigs.configs || []);
+    } catch (e) {
+      console.error("Failed to load factory details:", e);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchData();
+  }, []);
+
+  const handleActivate = async (sid: string) => {
+    setErrorMsg('');
+    setSuccessMsg('');
+    try {
+      const res = await fetch(`${API_BASE}/api/factory/config`, {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Admin-Key': ADMIN_KEY
+        },
+        body: JSON.stringify({
+          store_id: sid,
+          status: 'live'
+        })
+      });
+      if (res.ok) {
+        setSuccessMsg(`Factory "${sid.toUpperCase()}" promoted to live!`);
+        fetchData();
+      } else {
+        const errData = await res.json();
+        setErrorMsg(errData.detail || "Failed to promote factory status.");
+      }
+    } catch (err: any) {
+      setErrorMsg(err.message || "Promotion connection failure.");
+    }
+  };
+
+  const handleOpenOnboard = (sid: string = '') => {
+    setSelectedOnboardStore(sid);
+    setIsModalOpen(true);
+  };
+
+  const handleOnboardSubmit = () => {
+    setIsModalOpen(false);
+    setSuccessMsg(`Onboarding checklist submitted for "${selectedOnboardStore.toUpperCase()}"!`);
+    fetchData();
+    setTimeout(() => setSuccessMsg(''), 5000);
+  };
+
+  const getFactoryStatus = (sid: string) => {
+    const config = configs.find(c => c.store_id === sid);
+    return config ? config.status : 'un-onboarded';
+  };
+
+  return (
+    <div className="h-full flex flex-col bg-white">
+      <header className="flex justify-between items-center mb-8 pb-4 border-b border-[#E5E7EB]">
+        <div>
+          <h1 className="text-2xl font-bold text-[#111827]">Factory Checklist</h1>
+          <p className="text-sm text-[#6B7280]">Step-by-step physical and layout parameters setup.</p>
+        </div>
+      </header>
+
+      {successMsg && (
+        <div className="mb-4 p-3 border border-green-200 bg-green-50 text-xs font-semibold text-[#16A34A] rounded-lg">
+          {successMsg}
+        </div>
+      )}
+
+      {errorMsg && (
+        <div className="mb-4 p-3 border border-red-200 bg-red-50 text-xs font-semibold text-[#DC2626] rounded-lg">
+          {errorMsg}
+        </div>
+      )}
+
+      {loading ? (
+        <div className="flex-grow flex items-center justify-center text-sm text-[#6B7280]">
+          <RefreshCw className="w-6 h-6 animate-spin mr-2 text-[#1A3C5E]" /> Syncing industry configuration checklist...
+        </div>
+      ) : stores.length === 0 ? (
+        <div className="border border-dashed border-gray-200 bg-gray-50 rounded-lg p-8 text-center max-w-md mx-auto space-y-3">
+          <LayoutGrid className="w-12 h-12 text-[#6B7280]/40 mx-auto" />
+          <h3 className="text-sm font-semibold uppercase text-[#111827]">No Factory Store Listed</h3>
+          <p className="text-xs text-[#6B7280]">Register a factory plan account inside the Clients directory workspace first.</p>
+        </div>
+      ) : (
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+          {stores.map(s => {
+            const status = getFactoryStatus(s.store_id);
+            const isLive = status === 'live';
+            const isPending = status === 'pending';
+            const isUnOnboarded = status === 'un-onboarded';
+
+            return (
+              <div key={s.store_id} className="border border-[#E5E7EB] rounded-lg p-5 bg-white shadow-sm space-y-4">
+                <div className="flex justify-between items-start">
+                  <div className="w-10 h-10 border border-[#E5E7EB] bg-[#F8F9FA] text-[#1A3C5E] rounded-lg flex items-center justify-center">
+                    <LayoutGrid className="w-5 h-5" />
+                  </div>
+                  <div className="text-right">
+                    <span className="font-mono text-xs text-[#6B7280] block font-bold">{s.store_id}</span>
+                    <span className={`inline-flex px-2 py-0.5 text-[10px] font-bold border rounded-full uppercase mt-1 ${
+                      isLive ? 'bg-green-50 border-green-200 text-[#16A34A]' :
+                      isPending ? 'bg-yellow-50 border-yellow-200 text-[#CA8A04]' : 'bg-gray-50 border-gray-200 text-gray-500'
+                    }`}>
+                      {status}
+                    </span>
+                  </div>
+                </div>
+
+                <div>
+                  <h3 className="text-base font-bold text-gray-800">{s.store_name}</h3>
+                  <span className="text-xs text-[#6B7280] block mt-0.5">Provisioned {s.created_at ? new Date(s.created_at).toLocaleDateString() : 'N/A'}</span>
+                </div>
+
+                <div className="border-t border-gray-100 pt-4 flex justify-between items-center">
+                  {isPending && (
+                    <button 
+                      onClick={() => handleActivate(s.store_id)}
+                      className="px-3.5 py-1.5 bg-[#1A3C5E] text-white rounded-lg font-medium text-xs hover:opacity-90"
+                    >
+                      Promote to Live
+                    </button>
+                  )}
+                  {isUnOnboarded && (
+                    <button 
+                      onClick={() => handleOpenOnboard(s.store_id)}
+                      className="px-3.5 py-1.5 border border-gray-200 text-[#374151] rounded-lg hover:bg-gray-50 font-medium text-xs"
+                    >
+                      Configure Onboarding
+                    </button>
+                  )}
+                  {isLive && (
+                    <span className="text-xs font-semibold text-[#16A34A] flex items-center gap-1">
+                      <CheckCircle2 className="w-4 h-4" /> Layout and configurations synced
+                    </span>
+                  )}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {/* Checklist Configuration Modal */}
+      {isModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 overflow-y-auto">
+          <div className="relative w-full max-w-2xl bg-white border border-[#E5E7EB] rounded-lg shadow-xl p-6 my-8">
+            <button 
+              onClick={() => setIsModalOpen(false)}
+              className="absolute top-4 right-4 text-gray-400 hover:text-gray-600 text-lg font-bold"
+            >
+              ✕
+            </button>
+
+            <div className="border-b border-[#E5E7EB] pb-3 mb-5">
+              <h3 className="text-base font-bold text-[#111827]">Factory Onboarding Checklist</h3>
+              <p className="text-xs text-[#6B7280]">Configure layout nodes, ROI parameters, and shift telemetry.</p>
+            </div>
+
+            {selectedOnboardStore ? (
+              <div className="max-h-[60vh] overflow-y-auto rounded-lg">
+                <FactoryOnboarding storeId={selectedOnboardStore} onSubmit={handleOnboardSubmit} />
+              </div>
+            ) : (
+              <div className="py-12 text-center text-[#6B7280] italic text-xs">
+                Select a registered factory store above to start.
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
+
+// --- ANALYTICS PAGE ( dropdown selector + FactoryDashboard) ---
+const AnalyticsPage = ({ 
+  storeId, 
+  password, 
+  storeName,
+  factoryConfigs,
+  selectedRegistryClient
+}: { 
+  storeId: string | null; 
+  password?: string; 
+  storeName?: string;
+  factoryConfigs: any[];
+  selectedRegistryClient: string | null;
+}) => {
+  const isUserAdmin = storeId === 'admin';
+  const [selectedAnalyticsStore, setSelectedAnalyticsStore] = useState<string>(() => {
+    return isUserAdmin ? (selectedRegistryClient || '') : (storeId || '');
+  });
+
+  useEffect(() => {
+    if (storeId && storeId !== 'admin') {
+      setSelectedAnalyticsStore(storeId);
+    } else if (isUserAdmin && selectedRegistryClient) {
+      setSelectedAnalyticsStore(selectedRegistryClient);
+    }
+  }, [storeId, selectedRegistryClient, isUserAdmin]);
+
+  const activeConfigs = factoryConfigs.find(f => f.store_id === selectedAnalyticsStore);
+  const trialDay = activeConfigs?.trial_start
+    ? Math.floor((Date.now() - new Date(activeConfigs.trial_start).getTime()) / 86400000) + 1
+    : 1;
+
+  const currentStoreName = activeConfigs ? activeConfigs.store_name || selectedAnalyticsStore : selectedAnalyticsStore;
+
+  const renderContent = () => {
+    if (!selectedAnalyticsStore || selectedAnalyticsStore === 'admin') {
+      return (
+        <div className="flex-1 flex flex-col items-center justify-center p-8 border border-dashed border-gray-200 bg-gray-50 rounded-lg text-center">
+          <AlertTriangle className="w-12 h-12 text-[#CA8A04]/40 mb-3" />
+          <h3 className="text-sm font-semibold uppercase text-gray-800">Select Store Context</h3>
+          <p className="text-xs text-[#6B7280] max-w-sm mt-1">Select a client from the Clients tab first</p>
+        </div>
+      );
+    }
+
+    const isRetail = selectedAnalyticsStore.toLowerCase().includes('retail');
+    
+    if (isRetail) {
+      return <RetailAnalytics storeId={selectedAnalyticsStore} />;
+    }
+
+    const hasFactoryConfig = factoryConfigs.some(f => f.store_id === selectedAnalyticsStore);
+    if (!hasFactoryConfig) {
+      return (
+        <div className="flex-1 flex flex-col items-center justify-center p-8 border border-dashed border-gray-200 bg-gray-50 rounded-lg text-center">
+          <AlertTriangle className="w-12 h-12 text-[#CA8A04]/40 mb-3" />
+          <h3 className="text-sm font-semibold uppercase text-gray-800">No Config Found</h3>
+          <p className="text-xs text-[#6B7280] max-w-sm mt-1">No factory data yet for this client</p>
+        </div>
+      );
+    }
+
+    return (
+      <div className="flex-1 overflow-y-auto">
+        <ErrorBoundary>
+          <FactoryDashboard 
+            storeId={selectedAnalyticsStore} 
+            password={password || 'auris123'} 
+            factoryName={currentStoreName} 
+            trialDay={trialDay} 
+          />
+        </ErrorBoundary>
+      </div>
+    );
+  };
+
+  return (
+    <div className="h-full flex flex-col bg-white">
+      <header className="flex justify-between items-center mb-8 pb-4 border-b border-[#E5E7EB]">
+        <div>
+          <h1 className="text-2xl font-bold text-[#111827]">Analytics</h1>
+          <p className="text-sm text-[#6B7280]">Industrial floor efficiency parameters and occupancy graphs.</p>
+        </div>
+        
+        {/* Dropdown selector to change store context */}
+        {factoryConfigs.length > 0 && (
+          <div className="flex items-center gap-2">
+            <span className="text-xs font-semibold text-[#6B7280]">Store context:</span>
+            <select
+              value={selectedAnalyticsStore}
+              onChange={e => setSelectedAnalyticsStore(e.target.value)}
+              className="border border-gray-200 rounded-lg px-3 py-1.5 text-xs focus:outline-none focus:border-[#1A3C5E] bg-white font-medium text-gray-800"
+            >
+              <option value="" disabled>-- Select Store --</option>
+              {factoryConfigs.map(f => (
+                <option key={f.store_id} value={f.store_id}>{f.store_name || f.store_id}</option>
+              ))}
+            </select>
+          </div>
+        )}
+      </header>
+
+      {renderContent()}
+    </div>
+  );
+};
+
+// --- CORE LOGIN COMPONENT ---
 const Login = ({ onLogin }: { onLogin: (s: string, p: string, name: string) => void }) => {
-  const [usr, setUsr] = useState('test_store2'); // Default to their real test store for absolute ease of use!
-  const [pwd, setPwd] = useState('test123'); // Default to their real password!
+  const [usr, setUsr] = useState('');
+  const [pwd, setPwd] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
 
-  const handleSubmit = async () => {
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
     if (!usr || !pwd) {
-      setError("Please input personnel identifiers");
+      setError("Please input credentials");
       return;
     }
     setError('');
@@ -3516,97 +2711,83 @@ const Login = ({ onLogin }: { onLogin: (s: string, p: string, name: string) => v
       const res = await fetch(`${API_BASE}/api/login`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ store_id: usr, password: pwd })
+        body: JSON.stringify({ store_id: usr.trim(), password: pwd })
       });
-      if (!res.ok) throw new Error("Invalid Encryption / Identification Credentials");
+      if (!res.ok) throw new Error("Invalid credentials");
       const data = await res.json();
+      
+      if (data.role === 'admin') {
+        if (pwd !== ADMIN_KEY) {
+          throw new Error("Invalid admin key");
+        }
+      }
+      
       onLogin(data.store_id, pwd, data.store_name);
     } catch (e: any) {
-      setError(e.message || "Failed to synchronize with server core");
+      setError(e.message || "Failed to sign in");
     } finally {
       setLoading(false);
     }
   };
 
   return (
-    <div className="relative min-h-screen flex items-center justify-center overflow-hidden bg-auris-bg">
-      <div className="absolute inset-0 opacity-10 pointer-events-none">
-        <svg width="100%" height="100%">
-          <defs>
-            <pattern id="grid" width="60" height="60" patternUnits="userSpaceOnUse">
-              <path d="M 60 0 L 0 0 0 60" fill="none" stroke="hsl(180, 100%, 50%)" strokeWidth="0.5" />
-            </pattern>
-          </defs>
-          <rect width="100%" height="100%" fill="url(#grid)" />
-        </svg>
-      </div>
-
-      <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="relative z-10 w-full max-w-md p-6 md:p-10 glass rounded-3xl mx-4 md:mx-0">
-        <div className="flex flex-col items-center mb-10">
-          <div className="relative mb-6">
-            <motion.div animate={{ scale: [1, 1.2, 1], opacity: [0.3, 0.6, 0.3] }} transition={{ duration: 4, repeat: Infinity }} className="absolute inset-x-0 inset-y-0 bg-auris-cyan rounded-full blur-2xl" />
-            <div className="relative p-5 bg-black border border-auris-cyan/30 rounded-2xl">
-              <Hexagon className="w-10 h-10 text-auris-cyan" />
-            </div>
+    <div className="min-h-screen flex items-center justify-center bg-white p-4">
+      <div className="w-full max-w-md p-8 bg-white border border-[#E5E7EB] rounded-lg shadow-sm">
+        <div className="flex flex-col items-center mb-8">
+          <div className="p-3 bg-[#F8F9FA] border border-[#E5E7EB] rounded-lg mb-4 text-[#1A3C5E]">
+            <Hexagon className="w-8 h-8" />
           </div>
-          <h1 className="text-[10px] tracking-[0.6em] font-mono text-auris-cyan/50 uppercase">AURIS BY SKYM LABS</h1>
-          <h2 className="text-2xl font-display font-medium mt-3 tracking-tight">AUTHORIZED ACCESS</h2>
+          <h1 className="text-2xl font-bold text-[#1A3C5E] uppercase tracking-tight">Auris HQ</h1>
+          <p className="text-xs text-[#6B7280] font-medium tracking-wide mt-1 uppercase">Skym Labs Pvt Ltd</p>
         </div>
 
-        <div className="space-y-6">
-           <div className="space-y-1">
-             <label className="text-[9px] uppercase tracking-widest text-white/40 ml-1">Personnel Identifier</label>
-             <div className="relative">
-                <User className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-white/20" />
-                <input 
-                  placeholder="SKM_NODE_01" 
-                  value={usr}
-                  onChange={e => setUsr(e.target.value)}
-                  className="w-full bg-white/5 border border-white/10 rounded-xl pl-12 pr-4 py-4 text-sm focus:outline-none focus:border-auris-cyan/50 transition-all font-mono text-white" 
-                />
-             </div>
-           </div>
-           <div className="space-y-1">
-             <label className="text-[9px] uppercase tracking-widest text-white/40 ml-1">Quantum Encryption</label>
-             <div className="relative">
-                <Lock className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-white/20" />
-                <input 
-                  type="password" 
-                  placeholder="" 
-                  value={pwd}
-                  onChange={e => setPwd(e.target.value)}
-                  className="w-full bg-white/5 border border-white/10 rounded-xl pl-12 pr-4 py-4 text-sm focus:outline-none focus:border-auris-cyan/50 transition-all text-white" 
-                />
-             </div>
-           </div>
+        <form onSubmit={handleSubmit} className="space-y-4 text-sm text-gray-700">
+          <div className="flex flex-col gap-1.5">
+            <label className="font-semibold text-gray-800 text-xs">Store ID</label>
+            <input 
+              type="text"
+              placeholder="e.g. SKM_NODE_01" 
+              value={usr}
+              onChange={e => setUsr(e.target.value)}
+              className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-[#1A3C5E] font-mono"
+              required
+            />
+          </div>
 
-           {error && (
-             <div className="text-[10px] font-mono text-red-500 uppercase tracking-widest text-center mt-2">
-               {error}
-             </div>
-           )}
+          <div className="flex flex-col gap-1.5">
+            <label className="font-semibold text-gray-800 text-xs">Password</label>
+            <input 
+              type="password" 
+              placeholder="••••••••" 
+              value={pwd}
+              onChange={e => setPwd(e.target.value)}
+              className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-[#1A3C5E] font-mono"
+              required
+            />
+          </div>
 
-           <button 
-             onClick={handleSubmit}
-             disabled={loading}
-             className="relative overflow-hidden px-6 py-5 rounded font-display bg-gradient-to-r from-blue-600 to-auris-purple w-full text-[11px] uppercase tracking-[0.3em] mt-2 disabled:opacity-40"
-           >
-              {loading ? "Decrypting Core Link..." : "Sync Intelligence Core"}
-           </button>
-        </div>
+          {error && (
+            <div className="text-xs font-semibold text-[#DC2626] font-mono text-center">
+              {error}
+            </div>
+          )}
 
-        <div className="mt-12 flex items-center justify-center gap-3 text-[9px] font-mono text-white/20 uppercase tracking-widest">
-           <div className="w-2 h-2 rounded-full bg-auris-cyan animate-pulse" />
-           Security Protocol 85-B Active
-        </div>
-      </motion.div>
+          <button 
+            type="submit"
+            disabled={loading}
+            className="w-full py-2.5 bg-[#1A3C5E] text-white font-medium rounded-lg hover:opacity-90 disabled:opacity-50 transition-opacity text-sm text-center"
+          >
+            {loading ? "Signing in..." : "Sign In"}
+          </button>
+        </form>
+      </div>
     </div>
   );
 };
 
-// --- CORE APP ---
+// --- CORE APP LAYOUT ---
 export default function App() {
-  const [activeTab, setActiveTab] = useState<Tab>('mission');
+  const [activeTab, setActiveTab] = useState<Tab>('overview');
   const [storeId, setStoreId] = useState<string | null>(null);
   const [password, setPassword] = useState<string>('');
   const [storeName, setStoreName] = useState<string>('');
@@ -3630,14 +2811,28 @@ export default function App() {
 
   const handleSelectStore = (id: string) => {
     setStoreId(id);
-    setActiveTab('dashboard');
+    setActiveTab('factory_analytics');
   };
 
   const handleLoginSuccess = (id: string, pass: string, name: string) => {
     setStoreId(id);
     setPassword(pass);
     setStoreName(name);
-    setActiveTab('mission');
+    setActiveTab('overview');
+  };
+
+  const getSectionTitle = () => {
+    switch (activeTab) {
+      case 'overview': return 'Overview';
+      case 'management': return 'Clients';
+      case 'mapping': return 'Floor Plans';
+      case 'calibration': return 'Calibration';
+      case 'report': return 'AI Intelligence Report';
+      case 'training': return 'Training';
+      case 'factory': return 'Factory Parameters';
+      case 'factory_analytics': return 'Analytics';
+      default: return 'Auris HQ';
+    }
   };
 
   if (!storeId) {
@@ -3645,136 +2840,140 @@ export default function App() {
   }
 
   return (
-    <div className="flex h-screen bg-auris-bg text-white overflow-hidden selection:bg-auris-cyan/30">
-      {/* Sidebar Nav */}
-      <nav className="hidden md:flex w-20 border-r border-white/5 flex-col items-center py-8 bg-black/40 backdrop-blur-3xl z-40">
-        <div className="p-3 bg-auris-cyan/10 rounded-2xl border border-auris-cyan/30 mb-12 shadow-[0_0_15px_rgba(0,255,255,0.15)] cursor-pointer">
-          <Hexagon className="w-7 h-7 text-auris-cyan" />
+    <div className="flex h-screen bg-white overflow-hidden text-[#111827]">
+      {/* LEFT SIDEBAR NAVIGATION */}
+      <nav className="hidden md:flex w-[220px] bg-[#F8F9FA] border-r border-[#E5E7EB] flex-col flex-shrink-0 py-6 px-4">
+        {/* Auris Bold Logo top */}
+        <div className="flex items-center gap-2 px-2.5 mb-8">
+          <Hexagon className="w-5 h-5 text-[#1A3C5E]" />
+          <span className="font-bold text-lg text-[#1A3C5E] tracking-wide">Auris</span>
         </div>
 
-        <div className="flex flex-1 flex-col gap-6">
-           <NavButton active={activeTab === 'mission'} onClick={() => setActiveTab('mission')} icon={<Globe />} label="Overwatch" />
-           <NavButton active={activeTab === 'dashboard'} onClick={() => setActiveTab('dashboard')} icon={<LayoutDashboard />} label="Dashboard" />
-           <NavButton active={activeTab === 'mapping'} onClick={() => setActiveTab('mapping')} icon={<Layers />} label="Mapping" />
-           <NavButton active={activeTab === 'calibration'} onClick={() => setActiveTab('calibration')} icon={<RotateCw />} label="Calibration" />
-           <NavButton active={activeTab === 'report'} onClick={() => setActiveTab('report')} icon={<FileText />} label="Intelligence" />
-           <NavButton active={activeTab === 'training'} onClick={() => setActiveTab('training')} icon={<Cpu />} label="Training" />
-           <NavButton active={activeTab === 'factory'} onClick={() => setActiveTab('factory')} icon={<LayoutGrid />} label="Factory" />
-           <NavButton active={activeTab === 'factory_analytics'} onClick={() => setActiveTab('factory_analytics')} icon={<TrendingUp />} label="Analytics" />
-           <NavButton active={activeTab === 'management'} onClick={() => setActiveTab('management')} icon={<Settings />} label="Registry" />
+        {/* Text Navigation links below */}
+        <div className="flex-1 flex flex-col gap-1 overflow-y-auto">
+          <SidebarLink active={activeTab === 'overview'} onClick={() => setActiveTab('overview')} label="Overview" />
+          <SidebarLink active={activeTab === 'management'} onClick={() => {
+            setSelectedRegistryClient(null);
+            setActiveTab('management');
+          }} label="Clients" />
+          <SidebarLink active={activeTab === 'mapping'} onClick={() => setActiveTab('mapping')} label="Mapping" />
+          <SidebarLink active={activeTab === 'calibration'} onClick={() => setActiveTab('calibration')} label="Calibration" />
+          <SidebarLink active={activeTab === 'report'} onClick={() => setActiveTab('report')} label="Report" />
+          <SidebarLink active={activeTab === 'training'} onClick={() => setActiveTab('training')} label="Training" />
+          <SidebarLink active={activeTab === 'factory'} onClick={() => setActiveTab('factory')} label="Factory" />
+          <SidebarLink active={activeTab === 'factory_analytics'} onClick={() => setActiveTab('factory_analytics')} label="Analytics" />
         </div>
 
-        <div className="mt-auto flex flex-col gap-6">
-           <NavButton active={false} onClick={() => { setStoreId(null); setPassword(''); }} icon={<LogOut />} label="Logout" />
-        </div>
+        {/* Logout bottom */}
+        <button 
+          onClick={() => { setStoreId(null); setPassword(''); }}
+          className="mt-auto w-full text-left px-2.5 py-2 font-medium text-xs text-[#6B7280] hover:text-[#DC2626] flex items-center gap-2 rounded hover:bg-gray-50 transition-colors"
+        >
+          <LogOut className="w-4 h-4" />
+          <span>Logout</span>
+        </button>
       </nav>
 
-      {/* Viewport */}
-      <main className="flex-1 overflow-hidden relative font-sans pb-20 md:pb-0">
-        <AnimatePresence mode="wait">
-          <motion.div
-            key={activeTab}
-            initial={{ opacity: 0, x: 20 }}
-            animate={{ opacity: 1, x: 0 }}
-            exit={{ opacity: 0, x: -20 }}
-            transition={{ duration: 0.4, ease: [0.16, 1, 0.3, 1] }}
-            className="h-full"
-          >
-            {activeTab === 'mission' && (
-              <MissionControlTab 
-                onSelectStore={handleSelectStore} 
-                onSelectRegistryClient={(id) => {
-                  setSelectedRegistryClient(id);
-                  setActiveTab('management');
-                }} 
-              />
-            )}
-            {activeTab === 'dashboard' && <DashboardTab storeId={storeId} password={password} />}
-            {activeTab === 'mapping' && <MappingTab />}
-            {activeTab === 'calibration' && <CalibrationTab storeId={storeId} password={password} />}
-            {activeTab === 'report' && <ReportTab storeId={storeId} password={password} />}
-            {activeTab === 'training' && <TrainingTab />}
-            {activeTab === 'factory' && <FactoryOnboardingView storeId={storeId} />}
-            {activeTab === 'factory_analytics' && (
-              storeId ? (
-                (() => {
-                  const factory = factoryConfigs.find((f: any) => f.store_id === storeId);
-                  const trialDay = factory?.trial_start 
-                    ? Math.floor((Date.now() - new Date(factory.trial_start).getTime()) / 86400000) + 1 
-                    : 1;
-                  return (
-                    <FactoryDashboard 
-                      storeId={storeId} 
-                      password={password} 
-                      factoryName={storeName} 
-                      trialDay={trialDay} 
-                    />
-                  );
-                })()
-              ) : (
-                <div className="h-full flex items-center justify-center p-12">
-                  <GlassCard className="p-8 text-center max-w-md">
-                    <AlertTriangle className="w-12 h-12 text-auris-orange mx-auto mb-4 animate-pulse" />
-                    <h3 className="text-sm font-display uppercase tracking-widest text-white/90">Select Store First</h3>
-                    <p className="text-[11px] text-white/45 mt-2">Go to Overwatch and select a store from Mission Control first.</p>
-                  </GlassCard>
-                </div>
-              )
-            )}
-            {activeTab === 'management' && (
-              <ManagementTab 
-                onSelectStore={handleSelectStore} 
-                initialSelectedClient={selectedRegistryClient} 
-                clearInitialClient={() => setSelectedRegistryClient(null)} 
-              />
-            )}
-          </motion.div>
-        </AnimatePresence>
-      </main>
+      {/* CORE WORKSPACE VIEWPORT */}
+      <div className="flex-1 flex flex-col min-w-0 overflow-hidden bg-white pb-16 md:pb-0">
+        {/* Top bar */}
+        <header className="h-[60px] border-b border-[#E5E7EB] px-8 flex items-center flex-shrink-0 bg-white justify-between">
+          <span className="font-semibold text-[#111827] text-sm uppercase tracking-wider">{getSectionTitle()}</span>
+          <span className="text-xs text-[#6B7280] font-medium font-mono">Workspace ID: {storeId}</span>
+        </header>
+
+        {/* Main Content Pane */}
+        <main className="flex-1 overflow-y-auto p-4 md:p-8 min-h-0 bg-white">
+          {activeTab === 'overview' && (
+            <OverviewPage 
+              onSelectStore={handleSelectStore} 
+              onSelectRegistryClient={(id) => {
+                setSelectedRegistryClient(id);
+                setActiveTab('management');
+              }} 
+            />
+          )}
+          {activeTab === 'management' && (
+            <ClientsPage 
+              onSelectStore={handleSelectStore} 
+              initialSelectedClient={selectedRegistryClient} 
+              clearInitialClient={() => setSelectedRegistryClient(null)} 
+            />
+          )}
+          {activeTab === 'mapping' && <MappingPage storeId={storeId || ''} />}
+          {activeTab === 'calibration' && <CalibrationTab storeId={storeId} password={password} />}
+          {activeTab === 'report' && <ReportTab storeId={storeId} password={password} />}
+          {activeTab === 'training' && <TrainingTab />}
+          {activeTab === 'factory' && <FactoryOnboardingView storeId={storeId} />}
+          {activeTab === 'factory_analytics' && (
+            <AnalyticsPage 
+              storeId={storeId} 
+              password={password} 
+              storeName={storeName} 
+              factoryConfigs={factoryConfigs} 
+              selectedRegistryClient={selectedRegistryClient}
+            />
+          )}
+        </main>
+      </div>
 
       {/* Mobile Bottom Tab Bar */}
-      <nav className="flex md:hidden fixed bottom-0 left-0 right-0 h-20 z-50 bg-black/90 backdrop-blur-xl border-t border-white/10 overflow-x-auto custom-scrollbar">
-        <div className="flex w-full items-center justify-between px-2 py-1 min-w-max">
-          <MobileNavButton active={activeTab === 'mission'} onClick={() => setActiveTab('mission')} icon={<Globe />} label="Overwatch" />
-          <MobileNavButton active={activeTab === 'dashboard'} onClick={() => setActiveTab('dashboard')} icon={<LayoutDashboard />} label="Dashboard" />
+      <nav className="flex md:hidden fixed bottom-0 left-0 right-0 h-16 z-50 bg-[#F8F9FA]/95 backdrop-blur-md border-t border-[#E5E7EB] overflow-x-auto custom-scrollbar">
+        <div className="flex w-full items-center justify-between px-2 py-1 min-w-max h-full">
+          <MobileNavButton active={activeTab === 'overview'} onClick={() => setActiveTab('overview')} icon={<LayoutDashboard />} label="Overview" />
+          <MobileNavButton active={activeTab === 'management'} onClick={() => {
+            setSelectedRegistryClient(null);
+            setActiveTab('management');
+          }} icon={<Users />} label="Clients" />
           <MobileNavButton active={activeTab === 'mapping'} onClick={() => setActiveTab('mapping')} icon={<Layers />} label="Mapping" />
           <MobileNavButton active={activeTab === 'calibration'} onClick={() => setActiveTab('calibration')} icon={<RotateCw />} label="Calibration" />
-          <MobileNavButton active={activeTab === 'report'} onClick={() => setActiveTab('report')} icon={<FileText />} label="Intelligence" />
+          <MobileNavButton active={activeTab === 'report'} onClick={() => setActiveTab('report')} icon={<FileText />} label="Report" />
           <MobileNavButton active={activeTab === 'training'} onClick={() => setActiveTab('training')} icon={<Cpu />} label="Training" />
           <MobileNavButton active={activeTab === 'factory'} onClick={() => setActiveTab('factory')} icon={<LayoutGrid />} label="Factory" />
           <MobileNavButton active={activeTab === 'factory_analytics'} onClick={() => setActiveTab('factory_analytics')} icon={<TrendingUp />} label="Analytics" />
-          <MobileNavButton active={activeTab === 'management'} onClick={() => setActiveTab('management')} icon={<Settings />} label="Registry" />
+          
+          <button 
+            onClick={() => { setStoreId(null); setPassword(''); }}
+            className="min-w-[64px] flex-shrink-0 flex flex-col items-center justify-center py-1.5 gap-0.5 transition-colors duration-300 text-[#6B7280] hover:text-[#DC2626]"
+          >
+            <LogOut className="w-4 h-4" />
+            <span className="text-[9px] font-medium tracking-tight">Logout</span>
+          </button>
         </div>
       </nav>
     </div>
   );
 }
 
-function NavButton({ active, onClick, icon, label }: any) {
+// Helper nav link button component
+function SidebarLink({ active, onClick, label }: { active: boolean; onClick: () => void; label: string }) {
   return (
     <button 
       onClick={onClick}
-      className={`group relative p-4 rounded-2xl transition-all duration-300 ${active ? 'bg-auris-cyan/10 text-auris-cyan border border-auris-cyan/20' : 'text-white/20 hover:text-white/60 hover:bg-white/5'}`}
+      className={`w-full text-left px-2.5 py-2 font-medium text-xs rounded transition-colors ${
+        active 
+          ? 'text-[#1A3C5E] bg-blue-50/55 border-l-2 border-[#1A3C5E] font-bold' 
+          : 'text-[#6B7280] hover:text-[#111827] border-l-2 border-transparent hover:bg-gray-50/70'
+      }`}
     >
-      {React.cloneElement(icon, { className: "w-5 h-5" })}
-      <div className="absolute left-full ml-6 px-3 py-2 bg-auris-card backdrop-blur-xl border border-white/10 rounded-xl text-[10px] uppercase font-mono tracking-widest pointer-events-none opacity-0 group-hover:opacity-100 transition-all -translate-x-2 group-hover:translate-x-0 z-50 whitespace-nowrap shadow-2xl">
-         {label}
-      </div>
-      {active && (
-        <motion.div layoutId="nav-glow" className="absolute inset-0 bg-auris-cyan/15 blur-xl rounded-2xl -z-10" />
-      )}
+      {label}
     </button>
   );
 }
 
+// Helper mobile bottom nav button component
 function MobileNavButton({ active, onClick, icon, label }: any) {
   return (
     <button 
       onClick={onClick}
-      className={`min-w-[64px] flex-shrink-0 flex flex-col items-center justify-center py-2 gap-1 transition-colors duration-300 ${active ? 'text-auris-cyan' : 'text-white/30'}`}
+      className={`min-w-[64px] flex-shrink-0 flex flex-col items-center justify-center py-1 gap-0.5 transition-colors duration-300 ${
+        active 
+          ? 'text-[#1A3C5E] font-bold' 
+          : 'text-[#6B7280] hover:text-[#111827]'
+      }`}
     >
-      {React.cloneElement(icon, { className: "w-5 h-5" })}
-      <span className="text-[9px] font-medium tracking-tight font-display">{label}</span>
+      {React.cloneElement(icon, { className: "w-4 h-4" })}
+      <span className="text-[9px] font-medium tracking-tight">{label}</span>
     </button>
   );
 }
