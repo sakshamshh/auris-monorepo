@@ -56,7 +56,7 @@ def get_tracker(store_id: str, camera_id: str):
 
 try:
     if YOLO:
-        MODEL = YOLO("yolov8n.onnx")
+        MODEL = YOLO("yolov8n.onnx", task="detect")
         try:
             FIRE_MODEL = YOLO("fire.pt")
         except Exception:
@@ -130,6 +130,30 @@ def run_inference_and_tracking(payload: FramePayload) -> Tuple[List, List, bool]
     fire_detected = False
     W_orig, H_orig = payload.frame_resolution
 
+    # Full frame inference if crops are empty but full_frame_b64 is provided
+    if not payload.crops and payload.full_frame_b64:
+        try:
+            img_data = base64.b64decode(payload.full_frame_b64)
+            np_arr = np.frombuffer(img_data, np.uint8)
+            full_img = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
+            if full_img is not None:
+                results = MODEL(full_img, conf=0.25, classes=[0], verbose=False)
+                for r in results:
+                    for box in r.boxes:
+                        x1, y1, x2, y2 = box.xyxy[0].tolist()
+                        conf = float(box.conf[0])
+                        abs_x = max(0, min(int(x1), W_orig - 1))
+                        abs_y = max(0, min(int(y1), H_orig - 1))
+                        abs_w = max(1, int(x2 - x1))
+                        abs_h = max(1, int(y2 - y1))
+                        if abs_x + abs_w > W_orig:
+                            abs_w = W_orig - abs_x
+                        if abs_y + abs_h > H_orig:
+                            abs_h = H_orig - abs_y
+                        deepsort_detections.append(([abs_x, abs_y, abs_w, abs_h], conf, "person"))
+        except Exception as e:
+            logger.warning("Full frame error: %s", e)
+
     for i, crop in enumerate(payload.crops):
         try:
             img_data = base64.b64decode(crop.jpeg_b64)
@@ -153,8 +177,8 @@ def run_inference_and_tracking(payload: FramePayload) -> Tuple[List, List, bool]
                     if len(r.boxes) > 0:
                         fire_detected = True
 
-            # --- DEBUG PHASE: lower conf=0.15, no class filter, detect ALL objects ---
-            results = MODEL(crop_img, conf=0.15, verbose=False)
+            # --- Restore conf=0.25, classes=[0] for person only ---
+            results = MODEL(crop_img, conf=0.25, classes=[0], verbose=False)
             max_conf = 0.0
             crop_detections = []
             for r in results:
@@ -375,47 +399,51 @@ async def execute_frame_inference_and_tracking(payload: FramePayload, api_key: s
         if people_now > max_capacity:
             await dispatch_overcrowding_alert(s_id, people_now, max_capacity)
 
-        # Store latest snapshot for live view (draw bounding boxes if full frame available)
+        # Store latest snapshot for live view
+        s_id_low = s_id.lower()
+        c_id_low = c_id.lower()
+        frame_key = f"{s_id_low}_{c_id_low}"
+        frame_key_full = f"{s_id_low}_{c_id_low}_full"
+        frame_key_crop = f"{s_id_low}_{c_id_low}_crop"
+
         if payload.full_frame_b64:
             try:
-                frame_key = f"{s_id}_{c_id}"
-                frame_key_full = f"{s_id}_{c_id}_full"
-                annotated_b64 = payload.full_frame_b64
-                if final_detections:
-                    ffd = base64.b64decode(payload.full_frame_b64)
-                    ff_arr = np.frombuffer(ffd, np.uint8)
-                    ff_img = cv2.imdecode(ff_arr, cv2.IMREAD_COLOR)
-                    if ff_img is not None:
-                        fh, fw = ff_img.shape[:2]
-                        for det in final_detections:
-                            bn = det.get("bbox_normalised", [])
-                            if len(bn) == 4:
-                                bx1 = int(bn[0] * fw)
-                                by1 = int(bn[1] * fh)
-                                bx2 = int(bn[2] * fw)
-                                by2 = int(bn[3] * fh)
-                                cv2.rectangle(ff_img, (bx1, by1), (bx2, by2), (0, 255, 80), 2)
-                                label = f"Person #{det.get('track_id', '?')}"
-                                cv2.putText(ff_img, label, (bx1, max(by1 - 6, 10)),
-                                            cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 80), 1)
-                        _, buf = cv2.imencode(".jpg", ff_img, [cv2.IMWRITE_JPEG_QUALITY, 80])
-                        annotated_b64 = base64.b64encode(buf).decode("utf-8")
-                
-                snapshot_data = {
-                    "frame_b64": annotated_b64,
-                    "timestamp": payload.timestamp,
-                    "people_now": people_now,
-                    "camera_id": c_id,
-                    "store_id": s_id,
-                }
-                latest_frames[frame_key] = snapshot_data
-                latest_frames[frame_key_full] = snapshot_data
+                img_data = base64.b64decode(payload.full_frame_b64)
+                np_arr = np.frombuffer(img_data, np.uint8)
+                frame = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
+                if frame is not None:
+                    fh, fw = frame.shape[:2]
+                    # Draw green boxes for each detection
+                    for det in final_detections:
+                        bn = det.get("bbox_normalised", [])
+                        if len(bn) == 4:
+                            x1 = int(bn[0] * fw)
+                            y1 = int(bn[1] * fh)
+                            x2 = int(bn[2] * fw)
+                            y2 = int(bn[3] * fh)
+                        else:
+                            x1, y1, x2, y2 = det.get('bbox_abs', [0, 0, 50, 50])
+                        cv2.rectangle(frame, (int(x1), int(y1)), (int(x2), int(y2)), (0, 255, 0), 2)
+                    # Draw people count
+                    cv2.putText(frame, f'{people_now} people', (10, 30),
+                               cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
+                    _, buf = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 70])
+                    frame_b64 = base64.b64encode(buf).decode()
+                    
+                    snapshot_data = {
+                        'frame_b64': frame_b64,
+                        'timestamp': datetime.now(timezone.utc).isoformat(),
+                        'people_now': people_now,
+                        'camera_id': c_id_low,
+                        'store_id': s_id_low
+                    }
+                    latest_frames[frame_key] = snapshot_data
+                    latest_frames[frame_key_full] = snapshot_data
+                    logger.info(f"Stored full frame snapshot for {frame_key}, people={people_now}")
             except Exception as snap_err:
                 logger.warning(f"Snapshot annotation error: {snap_err}")
         elif crop_meta:
             try:
-                frame_key = f"{s_id}_{c_id}"
-                frame_key_crop = f"{s_id}_{c_id}_crop"
                 first_crop = crop_meta[0]
                 crop_b64 = first_crop["jpeg_b64"]
                 
@@ -437,39 +465,51 @@ async def execute_frame_inference_and_tracking(payload: FramePayload, api_key: s
                             rx2 = min(cw, rx1 + abs_bbox[2])
                             ry2 = min(ch, ry1 + abs_bbox[3])
                             
-                            cv2.rectangle(c_img, (rx1, ry1), (rx2, ry2), (0, 255, 80), 2)
-                            cv2.putText(c_img, f"Person (Crop)", (rx1, max(ry1 - 6, 10)),
-                                        cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0, 255, 80), 1)
+                            cv2.rectangle(c_img, (rx1, ry1), (rx2, ry2), (0, 255, 0), 2)
+                            cv2.putText(c_img, "Person", (rx1, max(ry1 - 6, 10)),
+                                        cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0, 255, 0), 1)
                     if not first_crop.get("detections"):
-                        cv2.rectangle(c_img, (0, 0), (cw - 1, ch - 1), (0, 255, 80), 2)
+                        cv2.rectangle(c_img, (0, 0), (cw - 1, ch - 1), (0, 255, 0), 2)
                         cv2.putText(c_img, "Motion Crop", (10, 20),
-                                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 80), 1)
+                                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1)
                     
-                    _, buf = cv2.imencode(".jpg", c_img, [cv2.IMWRITE_JPEG_QUALITY, 80])
+                    _, buf = cv2.imencode(".jpg", c_img, [cv2.IMWRITE_JPEG_QUALITY, 70])
                     annotated_crop_b64 = base64.b64encode(buf).decode("utf-8")
                     
                     crop_snapshot_data = {
                         "frame_b64": annotated_crop_b64,
                         "timestamp": payload.timestamp,
                         "people_now": people_now,
-                        "camera_id": c_id,
-                        "store_id": s_id,
+                        "camera_id": c_id_low,
+                        "store_id": s_id_low,
                     }
                     
-                    # Store under _crop key so fallback works
                     latest_frames[frame_key_crop] = crop_snapshot_data
-                    
-                    # Store under main key ONLY if no snapshot has been received yet
-                    if latest_frames.get(frame_key) is None:
-                        latest_frames[frame_key] = crop_snapshot_data
+                    latest_frames[frame_key] = crop_snapshot_data
+                    logger.info(f"Stored crop snapshot for {frame_key}, people={people_now}")
             except Exception as crop_snap_err:
-                logger.warning(f"Crop snapshot annotation error: {crop_snap_err}")
+                logger.warning(f"Crop snapshot error: {crop_snap_err}")
 
         for tid in list(track_positions[s_id][c_id].keys()):
             if tid not in current_ids:
                 track_positions[s_id][c_id].pop(tid, None)
                 track_y_positions[s_id][c_id].pop(tid, None)
                 zone_entry_times[s_id][c_id].pop(tid, None)
+
+        # Always guarantee latest_frames is not empty for this camera
+        key = f"{s_id}_{c_id}".lower()
+        if key not in latest_frames:
+            placeholder = np.zeros((360, 640, 3), dtype=np.uint8)
+            cv2.putText(placeholder, f'{s_id}/{c_id}', (50, 180), 
+                        cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2)
+            _, buf = cv2.imencode('.jpg', placeholder)
+            latest_frames[key] = {
+                'frame_b64': base64.b64encode(buf).decode(),
+                'timestamp': datetime.now(timezone.utc).isoformat(),
+                'people_now': people_now,
+                'camera_id': c_id.lower(),
+                'store_id': s_id.lower()
+            }
 
         blob_doc = {
             "store_id": s_id,
@@ -600,39 +640,67 @@ async def process_frame(request: Request, payload: FramePayload):
 
 async def get_live_snapshot_impl(request: Request, store_id: str, camera_id: str):
     """Internal helper to return the latest annotated frame or fallback crop for a camera."""
+    logger.info(f"Snapshot requested for {store_id}/{camera_id}, keys available: {list(latest_frames.keys())}")
     from db import ADMIN_KEY
-    admin_key = request.headers.get("X-Admin-Key", "") or request.query_params.get("key", "")
-    expected_key = ADMIN_KEY or "dcd62cb40e5fa0870d73c79fbd521d05"
-    if not expected_key or admin_key != expected_key:
-        raise HTTPException(status_code=403, detail="Invalid admin key")
+    from routes.admin import decode_jwt, JWT_SECRET
+    
+    # 1. Prefer Authorization: Bearer <token>
+    auth_header = request.headers.get("Authorization", "")
+    token = None
+    if auth_header.startswith("Bearer "):
+        token = auth_header[7:].strip()
+        
+    is_valid = False
+    if token:
+        payload = decode_jwt(token, JWT_SECRET)
+        if payload and payload.get("role") == "admin":
+            is_valid = True
+            
+    if not is_valid:
+        # 2. Fallback to X-Admin-Key header
+        admin_key = request.headers.get("X-Admin-Key", "")
+        # 3. Fallback to ?key= query parameter
+        if not admin_key:
+            admin_key = request.query_params.get("key", "")
+            
+        expected_key = ADMIN_KEY or "dcd62cb40e5fa0870d73c79fbd521d05"
+        if expected_key and admin_key == expected_key:
+            is_valid = True
+            
+    if not is_valid:
+        raise HTTPException(status_code=403, detail="Invalid admin session token or key")
 
-    key_full = f"{store_id}_{camera_id}_full"
-    key_crop = f"{store_id}_{camera_id}_crop"
-    key_std = f"{store_id}_{camera_id}"
+    store_id_low = store_id.lower()
+    camera_id_low = camera_id.lower()
 
-    # Priority 1: Try exact case-sensitive lookup
+    key_full = f"{store_id_low}_{camera_id_low}_full"
+    key_crop = f"{store_id_low}_{camera_id_low}_crop"
+    key_std = f"{store_id_low}_{camera_id_low}"
+
+    # Priority 1: Try exact case-sensitive lookup on lowercase keys
     snapshot = latest_frames.get(key_full) or latest_frames.get(key_crop) or latest_frames.get(key_std)
 
     # Priority 2: Case-insensitive fallback
     if not snapshot:
         for suffix in ["_full", "_crop", ""]:
-            target_key = f"{store_id}_{camera_id}{suffix}".lower()
+            target_key = f"{store_id_low}_{camera_id_low}{suffix}"
             for k, v in latest_frames.items():
-                if k.lower() == target_key:
+                if k.lower() == target_key.lower():
                     snapshot = v
                     break
             if snapshot:
                 break
 
     if not snapshot:
-        raise HTTPException(status_code=404, detail="No snapshot available yet for this camera")
+        # If no frame yet: return {"status": "waiting", "message": "No frames yet"} with 200 not 404
+        return {"status": "waiting", "message": "No frames yet"}
 
     return {
         "frame_b64": snapshot["frame_b64"],
         "timestamp": snapshot["timestamp"],
         "people_now": snapshot["people_now"],
-        "camera_id": camera_id,
-        "store_id": store_id,
+        "camera_id": camera_id_low,
+        "store_id": store_id_low,
     }
 
 
