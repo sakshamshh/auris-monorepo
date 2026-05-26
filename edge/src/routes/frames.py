@@ -60,8 +60,8 @@ def get_tracker(store_id: str, camera_id: str):
 
 try:
     if YOLO:
-        print("Loading heavy YOLOv8m model...", flush=True)
-        MODEL = YOLO("yolov8m.pt")
+        print("Loading YOLOv8n ONNX model...", flush=True)
+        MODEL = YOLO("yolov8n.onnx", task="detect")
         
         logger.info("Loading Fire Detection model...")
         # If fire.pt is missing, ultralytics might download a default or fail.

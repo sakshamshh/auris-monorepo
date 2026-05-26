@@ -30,6 +30,11 @@ export const login = async (store_id, password) => {
   return { ...res.data, password };
 };
 
+export const requestPasswordReset = async (store_id) => {
+  const res = await api.post('/api/auth/reset-request', { store_id });
+  return res.data;
+};
+
 export const logout = async () => {
   await storage.delete('store_id');
   await storage.delete('password');

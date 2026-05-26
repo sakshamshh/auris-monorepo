@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback } from "react";
 import {
-  View, Text, StyleSheet, ScrollView, TouchableOpacity, ActivityIndicator, RefreshControl, Share
+  View, Text, StyleSheet, ScrollView, TouchableOpacity, ActivityIndicator, RefreshControl, Share, Platform
 } from "react-native";
 import { fetchDeadtime, fetchBottleneck, fetchPatterns } from "../services/api";
 
@@ -8,6 +8,7 @@ export default function FactoryReportScreen({ store }) {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState(null);
+  const [downloading, setDownloading] = useState(false);
 
   const [narratives, setNarratives] = useState({ deadtime: "", bottleneck: "", patterns: "" });
 
@@ -51,6 +52,49 @@ export default function FactoryReportScreen({ store }) {
     loadReport();
   };
 
+  const handleDownloadPDF = async () => {
+    setDownloading(true);
+    const pdfUrl = "https://auris.skymlabs.com/api/factory/report/pdf";
+    const isMobile = Platform.OS !== "web" || /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+
+    if (isMobile) {
+      try {
+        const authedUrl = `${pdfUrl}?store_id=${encodeURIComponent(store.store_id)}&password=${encodeURIComponent(store.password)}`;
+        if (typeof window !== "undefined" && window.open) {
+          window.open(authedUrl, "_blank");
+        } else {
+          alert("Download failed. Try opening in a web browser.");
+        }
+      } catch (e) {
+        alert("Download failed. Try again.");
+      }
+      setDownloading(false);
+      return;
+    }
+
+    try {
+      const response = await fetch(pdfUrl, {
+        headers: {
+          "X-Store-ID": store.store_id,
+          "X-Password": store.password,
+        }
+      });
+      if (!response.ok) throw new Error("Failed");
+      const blob = await response.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `auris_report_${store.store_id}.pdf`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    } catch (e) {
+      alert("Download failed. Try again.");
+    }
+    setDownloading(false);
+  };
+
   // Compile combined narrative
   const combinedText = `
 FACTORY EFFICIENCY ANALYSIS REPORT
@@ -91,11 +135,18 @@ ${narratives.patterns || "No repetitive loss patterns narrative generated."}
       {/* Header Controls */}
       <View style={styles.header}>
         <Text style={styles.title}>✦ AI Executive Report</Text>
-        {hasData && (
-          <TouchableOpacity style={styles.regenBtn} onPress={handleRegenerate} disabled={loading || refreshing}>
-            <Text style={styles.regenBtnText}>Regenerate</Text>
-          </TouchableOpacity>
-        )}
+        <View style={{ flexDirection: "row", gap: 8 }}>
+          {hasData && (
+            <TouchableOpacity style={styles.regenBtn} onPress={handleDownloadPDF} disabled={loading || refreshing || downloading}>
+              <Text style={styles.regenBtnText}>{downloading ? "Downloading..." : "Download PDF"}</Text>
+            </TouchableOpacity>
+          )}
+          {hasData && (
+            <TouchableOpacity style={styles.regenBtn} onPress={handleRegenerate} disabled={loading || refreshing}>
+              <Text style={styles.regenBtnText}>Regenerate</Text>
+            </TouchableOpacity>
+          )}
+        </View>
       </View>
 
       {loading ? (

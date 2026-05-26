@@ -1,9 +1,11 @@
 from datetime import datetime, timezone, timedelta
 from fastapi import APIRouter, HTTPException, Request
+import logging
 
 from db import db, get_store_auth
 
 router = APIRouter()
+logger = logging.getLogger("AurisCloud.Analytics")
 
 
 async def _auth_store(request: Request):
@@ -54,33 +56,37 @@ async def api_today(request: Request):
 
 @router.get("/api/live")
 async def api_live(request: Request):
-    store = await _auth_store(request)
-    sid = store["store_id"]
-    cutoff = (datetime.now(timezone.utc) - timedelta(minutes=5)).isoformat()
+    try:
+        store = await _auth_store(request)
+        sid = store["store_id"]
+        cutoff = (datetime.now(timezone.utc) - timedelta(minutes=5)).isoformat()
 
-    pipeline = [
-        {"$match": {"store_id": sid, "received_at": {"$gte": cutoff}}},
-        {"$sort": {"received_at": -1}},
-        {"$group": {
-            "_id": "$camera_id",
-            "total_in": {"$first": "$counts.in"},
-            "total_out": {"$first": "$counts.out"},
-            "current": {"$first": "$counts.current"},
-            "last_seen": {"$first": "$received_at"},
-            "people_now": {"$first": "$people_now"},
-        }},
-    ]
-    cameras = []
-    async for row in db.blobs.aggregate(pipeline):
-        cameras.append({
-            "_id": row["_id"],
-            "total_in": row.get("total_in", 0),
-            "total_out": row.get("total_out", 0),
-            "current": row.get("current", 0),
-            "last_seen": row.get("last_seen"),
-            "people_now": row.get("people_now", 0),
-        })
-    return {"cameras": cameras}
+        pipeline = [
+            {"$match": {"store_id": sid, "received_at": {"$gte": cutoff}}},
+            {"$sort": {"received_at": -1}},
+            {"$group": {
+                "_id": "$camera_id",
+                "total_in": {"$first": "$counts.in"},
+                "total_out": {"$first": "$counts.out"},
+                "current": {"$first": "$counts.current"},
+                "last_seen": {"$first": "$received_at"},
+                "people_now": {"$first": "$people_now"},
+            }},
+        ]
+        cameras = []
+        async for row in db.blobs.aggregate(pipeline):
+            cameras.append({
+                "_id": row["_id"],
+                "total_in": row.get("total_in", 0),
+                "total_out": row.get("total_out", 0),
+                "current": row.get("current", 0),
+                "last_seen": row.get("last_seen"),
+                "people_now": row.get("people_now", 0),
+            })
+        return {"status": "ok", "cameras": cameras}
+    except Exception as e:
+        logger.error(f"Error in api_live: {e}")
+        return {"status": "ok", "cameras": []}
 
 
 @router.get("/api/hourly")

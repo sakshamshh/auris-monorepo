@@ -805,16 +805,16 @@ async def generate_factory_report_pdf(request: Request):
     Generates a high-quality 30-day PDF report for the factory.
     Requires store authentication headers: X-Store-ID + X-Password.
     """
-    store_id = request.headers.get("X-Store-ID", "").strip()
-    password = request.headers.get("X-Password", "")
+    store_id = request.headers.get("X-Store-ID", "").strip() or request.query_params.get("store_id", "").strip()
+    password = request.headers.get("X-Password", "") or request.query_params.get("password", "")
 
     if not store_id:
-        logger.warning("PDF report request missing X-Store-ID header")
-        raise HTTPException(status_code=401, detail="Missing X-Store-ID header")
+        logger.warning("PDF report request missing store_id")
+        raise HTTPException(status_code=401, detail="Missing store_id")
 
     if not password:
-        logger.warning("PDF report request missing X-Password header")
-        raise HTTPException(status_code=401, detail="Missing X-Password header")
+        logger.warning("PDF report request missing password")
+        raise HTTPException(status_code=401, detail="Missing password")
 
     # 1. Authenticate store
     store = await get_store_auth(store_id, password)
@@ -857,7 +857,10 @@ async def generate_factory_report_pdf(request: Request):
     return Response(
         content=pdf_bytes,
         media_type="application/pdf",
-        headers={"Content-Disposition": f"attachment; filename=auris_report_{store_id}.pdf"}
+        headers={
+            "Content-Disposition": 'attachment; filename="auris_report.pdf"',
+            "Content-Type": "application/pdf"
+        }
     )
 
 

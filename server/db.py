@@ -87,6 +87,10 @@ class Database:
     def reid_queue(self):
         return self._db.reid_queue
 
+    @property
+    def audit_log(self):
+        return self._db.audit_log
+
 
 def get_client() -> AsyncIOMotorClient:
     global _client
@@ -161,6 +165,7 @@ async def ensure_indexes():
         ("edge_heartbeats", ["camera_key"], {"unique": True}),
         ("reid_queue", [("status", 1), ("created_at", 1)], {}),
         ("person_embeddings", [("store_id", 1), ("created_at", 1)], {"expireAfterSeconds": 3600}),
+        ("audit_log", ["timestamp"], {"expireAfterSeconds": 90 * 24 * 60 * 60}),
     ]
     
     for coll_name, keys, kwargs in indexes:

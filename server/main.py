@@ -94,6 +94,7 @@ app = FastAPI(title="AURIS Cloud API", version="2.0.0", lifespan=lifespan)
 # Define explicit allowed origins to solve W3C CORS preflight requirements when allow_credentials=True
 origins = [
     "http://localhost:3000",
+    "http://localhost:5173",
     "http://localhost:8000",
     "http://localhost:8081",
     "http://localhost:19006",

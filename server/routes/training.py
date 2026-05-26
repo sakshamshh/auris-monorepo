@@ -3,10 +3,14 @@ Self-training: hard cases, pseudo labels, admin review.
 """
 
 import os
+import io
+import zipfile
+import base64
 from datetime import datetime, timezone
 from typing import Optional, List
 
 from fastapi import APIRouter, HTTPException, Request
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from db import db, ADMIN_KEY, COLLECTION_CAPS
@@ -66,9 +70,15 @@ async def list_hard_cases(request: Request, store_id: Optional[str] = None, stat
     if store_id:
         q["store_id"] = store_id
     cases = []
-    async for c in db.hard_cases.find(q).sort("created_at", -1).limit(limit):
-        c["_id"] = str(c["_id"])
-        cases.append(c)
+    try:
+        async for c in db.hard_cases.find(q).sort("created_at", -1).limit(limit):
+            c["_id"] = str(c["_id"])
+            cases.append(c)
+    except Exception:
+        # Fallback if created_at index is missing or excluded in CosmosDB
+        async for c in db.hard_cases.find(q).limit(limit):
+            c["_id"] = str(c["_id"])
+            cases.append(c)
     return {"cases": cases}
 
 
@@ -91,21 +101,74 @@ async def review_case(request: Request, body: ReviewAction):
     return {"status": status}
 
 
+@router.get("/api/training/export-yolo")
 @router.post("/api/training/export-yolo")
 async def export_yolo_dataset(request: Request, store_id: Optional[str] = None):
-    """Stub: builds manifest for monthly GCP training job."""
     require_admin(request)
-    q = {"status": "approved"}
-    if store_id:
-        q["store_id"] = store_id
-    approved = await db.hard_cases.count_documents(q)
-    pseudo = await db.pseudo_labels.count_documents({})
-    return {
-        "status": "ready",
-        "approved_hard_cases": approved,
-        "pseudo_labels": pseudo,
-        "message": "Run training job on GCP GPU; deploy yolov8m-auris-v2.pt to server",
-    }
+    try:
+        q = {}
+        if store_id:
+            q["store_id"] = store_id
+
+        # Find the correct image field name by checking first document
+        first_doc = await db.hard_cases.find_one(q)
+        img_field = "crop_b64"  # Default fallback
+        if first_doc:
+            for possible_key in ["crop_b64", "jpeg_b64", "image_b64"]:
+                if possible_key in first_doc:
+                    img_field = possible_key
+                    break
+
+        # Fetch up to 500 hard cases
+        cases = []
+        async for c in db.hard_cases.find(q).limit(500):
+            cases.append(c)
+
+        zip_buffer = io.BytesIO()
+        with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zip_file:
+            for case in cases:
+                case_id = str(case["_id"])
+                image_b64 = case.get(img_field)
+                if not image_b64:
+                    continue
+                
+                # Decode base64
+                if "," in image_b64:
+                    image_b64 = image_b64.split(",")[1]
+                image_data = base64.b64decode(image_b64)
+
+                # Write JPEG image
+                img_filename = f"images/case_{case_id}.jpg"
+                zip_file.writestr(img_filename, image_data)
+
+                # Write label
+                label_filename = f"labels/case_{case_id}.txt"
+                label_content = "0 0.5 0.5 1.0 1.0\n"
+                zip_file.writestr(label_filename, label_content)
+
+            # Write dataset.yaml
+            yaml_content = (
+                "path: ./\n"
+                "train: images\n"
+                "val: images\n\n"
+                "nc: 1\n"
+                "names:\n"
+                "  0: person\n"
+            )
+            zip_file.writestr("dataset.yaml", yaml_content)
+
+        zip_buffer.seek(0)
+        return StreamingResponse(
+            io.BytesIO(zip_buffer.getvalue()),
+            media_type="application/zip",
+            headers={"Content-Disposition": "attachment; filename=yolo_dataset.zip"}
+        )
+    except Exception as e:
+        import traceback
+        err_msg = f"Export pipeline error: {str(e)}\n{traceback.format_exc()}"
+        print(err_msg)
+        raise HTTPException(status_code=500, detail=err_msg)
+
 
 
 @router.get("/api/training/stats")

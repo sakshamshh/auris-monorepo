@@ -21,7 +21,7 @@ async function startServer() {
 
   // API Proxy & Mocks
   const EXTERNAL_API = 'https://auris.skymlabs.com';
-  const ADMIN_KEY = 'dcd62cb40e5fa0870d73c79fbd521d05';
+  const ADMIN_KEY = process.env.ADMIN_KEY || '';
 
   // Admin Proxy routes
   app.get('/admin/stores/:store_id/live', async (req, res) => {

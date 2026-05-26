@@ -110,6 +110,11 @@ export default function FactoryDataScreen({ store }) {
         <View style={styles.errorContainer}>
           <Text style={styles.errorText}>{error}</Text>
         </View>
+      ) : (!deadtimeData || !deadtimeData.by_zone || deadtimeData.by_zone.length === 0) && store?.status === 'pending' ? (
+        <View style={styles.emptyContainer}>
+          <Text style={styles.emptyTextTitle}>System is learning your factory.</Text>
+          <Text style={styles.emptyTextSubtitle}>Ask your Auris administrator to configure zones.</Text>
+        </View>
       ) : (
         <View style={styles.cardsStack}>
 
@@ -396,5 +401,27 @@ const styles = StyleSheet.create({
     color: "#92400E",
     textAlign: "center",
     lineHeight: 20,
+  },
+  emptyContainer: {
+    padding: 32,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "#FFFFFF",
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: "#E5E7EB",
+    marginTop: 20,
+  },
+  emptyTextTitle: {
+    fontSize: 16,
+    fontWeight: "700",
+    color: "#1A3C5E",
+    textAlign: "center",
+    marginBottom: 8,
+  },
+  emptyTextSubtitle: {
+    fontSize: 14,
+    color: "#6B7280",
+    textAlign: "center",
   },
 });

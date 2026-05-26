@@ -98,6 +98,20 @@ class PatchConfigRequest(BaseModel):
     status: str
 
 
+class CameraConfigModel(BaseModel):
+    model_config = ConfigDict(extra="allow")
+    camera_id: str
+    rtsp_url: str
+    label: str
+    fps: int = 2
+
+
+class CamerasUpdateRequest(BaseModel):
+    model_config = ConfigDict(extra="allow")
+    store_id: str
+    cameras: List[CameraConfigModel]
+
+
 # --- ROUTE HANDLERS ---
 
 @router.post("/api/factory/onboard")
@@ -152,20 +166,29 @@ async def onboard_factory(request: Request, body: OnboardRequest):
     ]
     
     raw_db = _get_raw_db()
-    now_iso = datetime.now(timezone.utc).isoformat()
+    now = datetime.now(timezone.utc)
+    now_iso = now.isoformat()
+    trial_start = now_iso
+    trial_end = (now + timedelta(days=30)).isoformat()
     
     update_doc = {
         "$set": {
             "store_id": body.store_id,
             "factory_name": body.factory_name,
+            "location": body.city,
             "city": body.city,
+            "status": "pending",
+            "trial_start": trial_start,
+            "trial_end": trial_end,
             "numShifts": body.numShifts,
             "shifts": shifts_list,
             "totalHeadcount": body.totalHeadcount,
             "operatorWage": body.operatorWage,
             "supervisorWage": body.supervisorWage,
             "contractorWage": body.contractorWage,
+            "whatsapp_number": body.whatsAppNumber,
             "whatsAppNumber": body.whatsAppNumber,
+            "cameras": [],
             # Computed values
             "operator_hourly_wage": operator_hourly,
             "supervisor_hourly_wage": supervisor_hourly,
@@ -174,7 +197,6 @@ async def onboard_factory(request: Request, body: OnboardRequest):
             "supervisorHourlyWage": supervisor_hourly,
             "contractorHourlyWage": contractor_hourly,
             "worker_categories": worker_categories,
-            "status": "pending",
             "updated_at": now_iso,
         },
         "$setOnInsert": {
@@ -190,6 +212,58 @@ async def onboard_factory(request: Request, body: OnboardRequest):
     
     logger.info("Successfully onboarded/updated factory for store_id %s", body.store_id)
     return {"success": True, "store_id": body.store_id}
+
+
+@router.post("/api/factory/cameras/update")
+async def update_factory_cameras(request: Request, body: CamerasUpdateRequest):
+    """
+    Update camera configurations for a factory in factory_config.
+    Requires admin key.
+    """
+    admin_key = request.headers.get("X-Admin-Key", "")
+    if admin_key != "dcd62cb40e5fa0870d73c79fbd521d05":
+        logger.warning("Admin authorization failed for camera update")
+        raise HTTPException(status_code=401, detail="Unauthorized")
+        
+    raw_db = _get_raw_db()
+    now_iso = datetime.now(timezone.utc).isoformat()
+    
+    cameras_list = [c.model_dump() for c in body.cameras]
+    
+    await raw_db.factory_config.update_one(
+        {"store_id": body.store_id},
+        {
+            "$set": {
+                "cameras": cameras_list,
+                "updated_at": now_iso
+            },
+            "$setOnInsert": {
+                "created_at": now_iso,
+                "status": "pending",
+                "shifts": [],
+                "worker_categories": []
+            }
+        },
+        upsert=True
+    )
+    
+    for cam in body.cameras:
+        await raw_db.cameras.update_one(
+            {"store_id": body.store_id, "camera_id": cam.camera_id},
+            {
+                "$set": {
+                    "name": cam.label,
+                    "rtsp_url": cam.rtsp_url,
+                    "label": cam.label,
+                    "updated_at": now_iso
+                }
+            },
+            upsert=True
+        )
+        
+    logger.info("Successfully updated factory cameras for store %s: %s", body.store_id, cameras_list)
+    return {"success": True, "store_id": body.store_id}
+
 
 
 @router.get("/api/factory/config")
@@ -252,6 +326,46 @@ async def list_factory_configs(request: Request):
             c["_id"] = str(c["_id"])
         configs.append(c)
     return {"configs": configs}
+
+
+@router.get("/api/factory/zones")
+async def get_zones(request: Request, store_id: str):
+    """
+    Get all zone configurations for a store.
+    """
+    admin_key = request.headers.get("X-Admin-Key", "")
+    if admin_key != "dcd62cb40e5fa0870d73c79fbd521d05":
+        header_store_id = request.headers.get("X-Store-ID", "").strip()
+        password = request.headers.get("X-Password", "")
+        
+        if not header_store_id or header_store_id != store_id:
+            logger.warning("GET zones unauthorized: store_id mismatch or missing")
+            raise HTTPException(status_code=401, detail="Unauthorized")
+            
+        raw_db = _get_raw_db()
+        store = await raw_db.stores.find_one({"store_id": store_id})
+        if not store:
+            logger.warning("Store ID %s not found in stores collection", store_id)
+            raise HTTPException(status_code=404, detail="Store not found")
+            
+        if not password:
+            raise HTTPException(status_code=401, detail="Missing X-Password header")
+            
+        from db import verify_password
+        if not verify_password(password, store.get("password_hash", "")):
+            logger.warning("GET zones auth failed: invalid password for store %s", store_id)
+            raise HTTPException(status_code=401, detail="Invalid credentials")
+            
+    raw_db = _get_raw_db()
+    cursor = raw_db.zone_config.find({"store_id": store_id})
+    zones = []
+    async for z in cursor:
+        if "_id" in z:
+            z["_id"] = str(z["_id"])
+        zones.append(z)
+        
+    logger.info("Successfully retrieved zones for store %s", store_id)
+    return {"zones": zones}
 
 
 @router.post("/api/factory/zones")

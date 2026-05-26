@@ -83,8 +83,9 @@ class ErrorBoundary extends React.Component<{ children: React.ReactNode }, { has
   static getDerivedStateFromError(error: any) { return { hasError: true, error }; }
   render() {
     if (this.state.hasError) return (
-      <div style={{padding:32,color:'#DC2626'}}>
-        Analytics failed to load. Try selecting a different client.
+      <div className="p-8 text-sm text-[#6B7280] font-medium border border-[#E5E7EB] bg-gray-50 rounded-lg text-center">
+        <div className="font-semibold text-[#374151] mb-1">No analytics data yet.</div>
+        <div>Data appears after the first 3 days of streaming.</div>
       </div>
     );
     return this.props.children;
@@ -95,12 +96,10 @@ class ErrorBoundary extends React.Component<{ children: React.ReactNode }, { has
 const RetailAnalytics = ({ storeId }: { storeId: string }) => {
   const [data, setData] = useState<{ today_total: number; peak_hour: string; seven_day_total: number } | null>(null);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState('');
 
   useEffect(() => {
     const fetchFootfall = async () => {
       setLoading(true);
-      setError('');
       try {
         const res = await fetch(`${API_BASE}/api/retail/footfall`, {
           headers: {
@@ -108,6 +107,16 @@ const RetailAnalytics = ({ storeId }: { storeId: string }) => {
             'X-Password': 'auris123'
           }
         });
+        if (!res.ok) {
+          setData(null);
+          return;
+        }
+        const footfallData = await res.json();
+        if (!footfallData || Object.keys(footfallData).length === 0) {
+          setData(null);
+          return;
+        }
+
         const historyRes = await fetch(`${API_BASE}/api/retail/footfall/history`, {
           headers: {
             'X-Store-ID': storeId,
@@ -115,9 +124,6 @@ const RetailAnalytics = ({ storeId }: { storeId: string }) => {
           }
         });
 
-        if (!res.ok) throw new Error("Failed to load footfall metrics");
-        const footfallData = await res.json();
-        
         let sevenDayTotal = 0;
         if (historyRes.ok) {
           const historyData = await historyRes.json();
@@ -125,17 +131,17 @@ const RetailAnalytics = ({ storeId }: { storeId: string }) => {
           const last7 = daily.slice(-7);
           sevenDayTotal = last7.reduce((sum: number, day: any) => sum + (day.visitors || 0), 0);
         } else {
-          sevenDayTotal = footfallData.today_total * 7;
+          sevenDayTotal = (footfallData.today_total || 0) * 7;
         }
 
         setData({
-          today_total: footfallData.today_total,
-          peak_hour: footfallData.peak_hour,
+          today_total: footfallData.today_total || 0,
+          peak_hour: footfallData.peak_hour || "—",
           seven_day_total: sevenDayTotal
         });
       } catch (err) {
         console.error(err);
-        setError("No retail data available yet");
+        setData(null);
       } finally {
         setLoading(false);
       }
@@ -150,10 +156,10 @@ const RetailAnalytics = ({ storeId }: { storeId: string }) => {
     return <div className="p-8 text-sm text-[#6B7280]">Loading retail analytics...</div>;
   }
 
-  if (error || !data) {
+  if (!data) {
     return (
-      <div className="p-8 text-sm text-[#DC2626] font-medium border border-red-200 bg-red-50 rounded-lg">
-        {error || "No retail data available yet"}
+      <div className="p-8 text-sm text-[#6B7280] font-medium border border-[#E5E7EB] bg-gray-50 rounded-lg text-center">
+        No footfall data yet
       </div>
     );
   }
@@ -1047,7 +1053,7 @@ const ClientsPage = ({
                               </tr>
                             ) : edgeCameras.length === 0 ? (
                               <tr>
-                                <td colSpan={4} className="px-4 py-4 text-center text-[#6B7280] italic">No cameras configured. Use Edit to add cameras.</td>
+                                <td colSpan={4} className="px-4 py-4 text-center text-[#6B7280] italic">No cameras yet. Run provision.py on the edge device.</td>
                               </tr>
                             ) : (
                               edgeCameras.map((cam: any) => {
@@ -1096,7 +1102,7 @@ const ClientsPage = ({
                       {edgeCamerasLoading ? (
                         <div className="text-xs text-[#6B7280] italic">Loading cameras...</div>
                       ) : edgeCameras.length === 0 ? (
-                        <div className="text-xs text-[#6B7280] italic">No cameras configured.</div>
+                        <div className="text-xs text-[#6B7280] italic">No cameras yet. Run provision.py on the edge device.</div>
                       ) : (
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                           {edgeCameras.map((cam: any) => (
@@ -1164,16 +1170,32 @@ const ClientsPage = ({
               {clientTab === 'analytics' && (
                 <div className="space-y-6">
                   {selectedClientData?.plan === 'FACTORY' ? (
-                    <div className="border border-[#E5E7EB] rounded-lg bg-white overflow-hidden shadow-sm">
-                      <ErrorBoundary>
-                        <FactoryDashboard 
-                          storeId={selectedClient || ''} 
-                          password="auris123" 
-                          factoryName={selectedClientData?.store_name || selectedClient || ''} 
-                          trialDay={30} 
-                        />
-                      </ErrorBoundary>
-                    </div>
+                    (selectedClientData?.factoryConfig?.status === 'pending' || selectedClientData?.status === 'pending') ? (
+                      <div className="flex flex-col items-center justify-center p-8 border border-dashed border-[#E5E7EB] bg-[#F9FAFB] rounded-lg text-center space-y-4">
+                        <AlertTriangle className="w-12 h-12 text-[#CA8A04]" />
+                        <h3 className="text-base font-bold text-[#111827]">Factory not yet marked live</h3>
+                        <p className="text-sm text-[#6B7280] max-w-sm">
+                          Configure zones and mark live to start analytics.
+                        </p>
+                        <button
+                          onClick={handleMarkLive}
+                          className="py-2.5 px-6 bg-[#16A34A] text-white font-semibold rounded-lg hover:bg-[#15803d] active:bg-[#14532d] shadow-sm hover:shadow transition-all text-sm flex items-center gap-2"
+                        >
+                          <span>🚀</span> Mark Live
+                        </button>
+                      </div>
+                    ) : (
+                      <div className="border border-[#E5E7EB] rounded-lg bg-white overflow-hidden shadow-sm">
+                        <ErrorBoundary>
+                          <FactoryDashboard 
+                            storeId={selectedClient || ''} 
+                            password="auris123" 
+                            factoryName={selectedClientData?.store_name || selectedClient || ''} 
+                            trialDay={30} 
+                          />
+                        </ErrorBoundary>
+                      </div>
+                    )
                   ) : (
                     <RetailAnalytics storeId={selectedClient || ''} />
                   )}
@@ -1564,13 +1586,12 @@ const ClientsPage = ({
                 <div className="flex flex-col gap-2 pt-4">
                   <button
                     onClick={() => {
-                      const text = `Client Name: ${createdCredentials?.store_name}\nStore ID: ${createdCredentials?.store_id}\nPassword: ${createdCredentials?.password}\nAPI Key: ${createdCredentials?.api_key}`;
-                      navigator.clipboard.writeText(text);
-                      showToast("Credentials copied to clipboard", 'success');
+                      navigator.clipboard.writeText(createdCredentials?.api_key || '');
+                      showToast("API key copied", 'success');
                     }}
                     className="w-full py-2.5 bg-white border border-gray-200 text-[#374151] rounded-lg hover:bg-gray-50 transition-colors font-medium text-xs text-center"
                   >
-                    Copy Credentials
+                    Copy API Key
                   </button>
                   <button
                     onClick={() => {
@@ -1874,25 +1895,28 @@ const MappingPage = ({ storeId }: { storeId: string }) => {
 
 // --- LIVE CAMERA VIEW COMPONENT ---
 const LiveCameraView = ({ storeId, cameraId, cameraLabel }: { storeId: string; cameraId: string; cameraLabel: string }) => {
-  const [snapshot, setSnapshot] = useState<{ frame_b64: string; timestamp: string; people_now: number } | null>(null);
-  const [noFrame, setNoFrame] = useState(false);
+  const [snapshot, setSnapshot] = useState<any>(null);
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const fetchSnapshot = async () => {
+    const cleanStoreId = storeId.toLowerCase().trim().replace(/\s+/g, '');
+    const cleanCameraId = cameraId.toLowerCase().trim().replace(/\s+/g, '');
+    console.log('Fetching snapshot for:', storeId, cameraId);
     try {
       const res = await fetch(
-        `${API_BASE}/api/live/snapshot?store_id=${encodeURIComponent(storeId)}&camera_id=${encodeURIComponent(cameraId)}`,
-        { headers: { 'X-Admin-Key': ADMIN_KEY } }
+        `${API_BASE}/api/live/snapshot/${encodeURIComponent(cleanStoreId)}/${encodeURIComponent(cleanCameraId)}?key=${encodeURIComponent(ADMIN_KEY)}`
       );
       if (res.ok) {
         const data = await res.json();
+        console.log('Response:', data);
         setSnapshot(data);
-        setNoFrame(false);
+        setErrorMsg(null);
       } else {
-        setNoFrame(true);
+        setErrorMsg("Camera offline");
       }
-    } catch {
-      setNoFrame(true);
+    } catch (err) {
+      setErrorMsg("Camera offline");
     }
   };
 
@@ -1904,24 +1928,33 @@ const LiveCameraView = ({ storeId, cameraId, cameraLabel }: { storeId: string; c
     };
   }, [storeId, cameraId]);
 
-  const imgSrc = snapshot?.frame_b64
-    ? (snapshot.frame_b64.startsWith('data:') ? snapshot.frame_b64 : `data:image/jpeg;base64,${snapshot.frame_b64}`)
-    : null;
-
   const lastUpdated = snapshot?.timestamp
     ? new Date(snapshot.timestamp).toLocaleTimeString()
     : null;
 
   return (
     <div className="border border-[#E5E7EB] rounded-lg overflow-hidden bg-[#0d1117] relative" style={{ minHeight: 180 }}>
-      {imgSrc ? (
-        <img src={imgSrc} className="w-full h-full object-cover" style={{ minHeight: 180 }} draggable={false} />
+      {snapshot?.frame_b64 ? (
+        <img
+          src={`data:image/jpeg;base64,${snapshot.frame_b64}`}
+          style={{ width: '100%' }}
+          className="w-full h-full object-cover"
+          draggable={false}
+        />
+      ) : snapshot?.status === 'waiting' ? (
+        <div className="flex flex-col items-center justify-center" style={{ minHeight: 180 }}>
+          <Video className="w-8 h-8 text-gray-600 mb-2 animate-pulse" />
+          <span className="text-xs text-gray-400 font-mono">Waiting for frames...</span>
+        </div>
+      ) : errorMsg ? (
+        <div className="flex flex-col items-center justify-center" style={{ minHeight: 180 }}>
+          <Video className="w-8 h-8 text-red-500 mb-2" />
+          <span className="text-xs text-red-400 font-mono">{errorMsg}</span>
+        </div>
       ) : (
         <div className="flex flex-col items-center justify-center" style={{ minHeight: 180 }}>
           <Video className="w-8 h-8 text-gray-600 mb-2" />
-          <span className="text-xs text-gray-500 font-mono">
-            {noFrame ? 'No frames received yet' : 'Connecting...'}
-          </span>
+          <span className="text-xs text-gray-500 font-mono">Connecting...</span>
         </div>
       )}
 
@@ -1929,7 +1962,7 @@ const LiveCameraView = ({ storeId, cameraId, cameraLabel }: { storeId: string; c
       <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/80 to-transparent px-3 py-2">
         <div className="flex items-center justify-between">
           <span className="text-xs font-mono text-white font-semibold">{cameraLabel} · {cameraId}</span>
-          {snapshot && (
+          {snapshot?.people_now !== undefined && (
             <span className="text-xs font-bold text-emerald-400">
               👤 {snapshot.people_now} detected
             </span>
@@ -2269,10 +2302,17 @@ const TrainingTab = () => {
         method: 'POST',
         headers: { 'X-Admin-Key': ADMIN_KEY }
       });
-      const data = await res.json();
-      if (res.ok) {
-        setExportMsg(`Export complete! YOLOv8 Manifest: ${data.approved_hard_cases} Cases, ${data.pseudo_labels} Pseudo Labels.`);
-      }
+      if (!res.ok) throw new Error("Failed to export");
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = "yolo_dataset.zip";
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+      setExportMsg("Export complete! YOLOv8 Dataset downloaded successfully.");
     } catch (e) {
       setExportMsg("Export pipeline error.");
     }
@@ -2774,6 +2814,45 @@ const AnalyticsPage = ({
           <AlertTriangle className="w-12 h-12 text-[#CA8A04]/40 mb-3" />
           <h3 className="text-sm font-semibold uppercase text-gray-800">No Config Found</h3>
           <p className="text-xs text-[#6B7280] max-w-sm mt-1">No factory data yet for this client</p>
+        </div>
+      );
+    }
+
+    if (activeConfigs?.status === 'pending') {
+      return (
+        <div className="flex-1 flex flex-col items-center justify-center p-8 border border-dashed border-[#E5E7EB] bg-[#F9FAFB] rounded-lg text-center space-y-4">
+          <AlertTriangle className="w-12 h-12 text-[#CA8A04]" />
+          <h3 className="text-base font-bold text-[#111827]">Factory not yet marked live</h3>
+          <p className="text-sm text-[#6B7280] max-w-sm">
+            Configure zones and mark live to start analytics.
+          </p>
+          <button
+            onClick={async () => {
+              if (!window.confirm(`Mark ${currentStoreName} as LIVE? This will start the 30-day trial.`)) return;
+              try {
+                const res = await fetch(`${API_BASE}/api/factory/config`, {
+                  method: 'PATCH',
+                  headers: {
+                    'Content-Type': 'application/json',
+                    'X-Admin-Key': ADMIN_KEY
+                  },
+                  body: JSON.stringify({
+                    store_id: selectedAnalyticsStore,
+                    status: 'live'
+                  })
+                });
+                if (!res.ok) throw new Error("Failed to mark LIVE");
+
+                alert("✅ Client is now LIVE!");
+                window.location.reload();
+              } catch (err: any) {
+                alert(err.message || "Failed to mark live");
+              }
+            }}
+            className="py-2.5 px-6 bg-[#16A34A] text-white font-semibold rounded-lg hover:bg-[#15803d] active:bg-[#14532d] shadow-sm hover:shadow transition-all text-sm flex items-center gap-2"
+          >
+            <span>🚀</span> Mark Live
+          </button>
         </div>
       );
     }

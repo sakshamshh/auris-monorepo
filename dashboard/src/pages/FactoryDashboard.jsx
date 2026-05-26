@@ -3,6 +3,25 @@ import { useState, useEffect } from "react";
 const IS_DEV = typeof window !== 'undefined' && (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1');
 const API_BASE = import.meta.env.VITE_API_URL || (IS_DEV ? 'http://localhost:8000' : 'https://auris.skymlabs.com');
 
+const safeFetchJson = async (url, options, defaultFallback) => {
+  try {
+    const res = await fetch(url, options);
+    if (!res.ok) {
+      console.warn(`safeFetchJson: ${url} returned status ${res.status}`);
+      return defaultFallback;
+    }
+    const text = await res.text();
+    if (!text || text.trim() === "") {
+      return defaultFallback;
+    }
+    const data = JSON.parse(text);
+    return data || defaultFallback;
+  } catch (err) {
+    console.error(`safeFetchJson error for ${url}:`, err);
+    return defaultFallback;
+  }
+};
+
 const fmt = (n) => n?.toLocaleString("en-IN") ?? "—";
 const fmtRs = (n) => n != null ? `₹${fmt(Math.round(n))}` : "—";
 const fmtHrs = (n) => n != null ? `${parseFloat(n).toFixed(1)} hrs` : "—";
@@ -42,15 +61,12 @@ const Narrative = ({ text }) => {
   );
 };
 
-const EmptyState = ({ days }) => (
+const EmptyState = () => (
   <div className="flex flex-col items-center justify-center py-20 text-center">
     <div className="w-12 h-12 rounded-full bg-[#F3F4F6] flex items-center justify-center mb-4">
       <span className="text-2xl">📊</span>
     </div>
-    <p className="text-sm font-medium text-[#374151]">Building your picture</p>
-    <p className="text-xs text-[#9CA3AF] mt-1">
-      {days < 7 ? `Check back on Day 7 — ${7 - days} days to go` : "No data found for this period"}
-    </p>
+    <p className="text-sm font-semibold text-[#374151]">No data yet — check back after Day 3</p>
   </div>
 );
 
@@ -64,24 +80,21 @@ const Loading = () => (
 function DeadTimeView({ storeId, password, trialDay }) {
   const [data, setData]       = useState(null);
   const [loading, setLoading] = useState(true);
-  const [error, setError]     = useState("");
 
   useEffect(() => {
     (async () => {
       setLoading(true);
-      try {
-        const res = await fetch(`${API_BASE}/api/factory/deadtime`, {
-          headers: { "X-Store-ID": storeId, "X-Password": password },
-        });
-        if (!res.ok) { setError("Failed to load dead time data."); return; }
-        setData(await res.json());
-      } catch { setError("Connection error."); }
-      finally { setLoading(false); }
+      const resData = await safeFetchJson(
+        `${API_BASE}/api/factory/deadtime`,
+        { headers: { "X-Store-ID": storeId, "X-Password": password } },
+        { summary: null, by_zone: [], worst_zone: "", worst_day: "", narrative: "" }
+      );
+      setData(resData);
+      setLoading(false);
     })();
   }, [storeId, password]);
 
   if (loading) return <Loading />;
-  if (error)   return <div className="p-6 text-sm text-red-600">{error}</div>;
   if (!data || !data.summary) return <EmptyState days={trialDay} />;
 
   const { summary, by_zone = [], worst_zone, worst_day, narrative } = data;
@@ -142,24 +155,21 @@ function DeadTimeView({ storeId, password, trialDay }) {
 function BottleneckView({ storeId, password, trialDay }) {
   const [data, setData]       = useState(null);
   const [loading, setLoading] = useState(true);
-  const [error, setError]     = useState("");
 
   useEffect(() => {
     (async () => {
       setLoading(true);
-      try {
-        const res = await fetch(`${API_BASE}/api/factory/bottleneck`, {
-          headers: { "X-Store-ID": storeId, "X-Password": password },
-        });
-        if (!res.ok) { setError("Failed to load bottleneck data."); return; }
-        setData(await res.json());
-      } catch { setError("Connection error."); }
-      finally { setLoading(false); }
+      const resData = await safeFetchJson(
+        `${API_BASE}/api/factory/bottleneck`,
+        { headers: { "X-Store-ID": storeId, "X-Password": password } },
+        { ranked_stations: [], narrative: "" }
+      );
+      setData(resData);
+      setLoading(false);
     })();
   }, [storeId, password]);
 
   if (loading) return <Loading />;
-  if (error)   return <div className="p-6 text-sm text-red-600">{error}</div>;
 
   if (!data || data.cached === false) return (
     <div className="flex flex-col items-center justify-center py-20 text-center">
@@ -226,24 +236,21 @@ function BottleneckView({ storeId, password, trialDay }) {
 function PatternsView({ storeId, password, trialDay }) {
   const [data, setData]       = useState(null);
   const [loading, setLoading] = useState(true);
-  const [error, setError]     = useState("");
 
   useEffect(() => {
     (async () => {
       setLoading(true);
-      try {
-        const res = await fetch(`${API_BASE}/api/factory/patterns`, {
-          headers: { "X-Store-ID": storeId, "X-Password": password },
-        });
-        if (!res.ok) { setError("Failed to load pattern data."); return; }
-        setData(await res.json());
-      } catch { setError("Connection error."); }
-      finally { setLoading(false); }
+      const resData = await safeFetchJson(
+        `${API_BASE}/api/factory/patterns`,
+        { headers: { "X-Store-ID": storeId, "X-Password": password } },
+        { patterns: [], narrative: "" }
+      );
+      setData(resData);
+      setLoading(false);
     })();
   }, [storeId, password]);
 
   if (loading) return <Loading />;
-  if (error)   return <div className="p-6 text-sm text-red-600">{error}</div>;
   if (!data || !data.patterns?.length) return <EmptyState days={trialDay} />;
 
   const { patterns = [], narrative } = data;
