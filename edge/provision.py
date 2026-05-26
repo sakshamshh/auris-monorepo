@@ -239,42 +239,88 @@ def run_provisioning():
 
             # 3d. Test each potential camera with common RTSP patterns
             print("Verifying RTSP feeds using OpenCV video capture...")
-            
+
+            RTSP_PATTERNS = [
+                # EZYKAM / generic
+                "rtsp://admin:{password}@{ip}:{port}/live/channel0",
+                "rtsp://admin:{password}@{ip}:{port}/live/channel1",
+                "rtsp://admin:{password}@{ip}:{port}/live/main",
+                # CPPlus
+                "rtsp://admin:{password}@{ip}:{port}/avstream/channel=1",
+                "rtsp://admin:{password}@{ip}:{port}/avstream/channel=0",
+                # Hikvision
+                "rtsp://admin:{password}@{ip}:{port}/Streaming/Channels/101",
+                "rtsp://admin:{password}@{ip}:{port}/Streaming/Channels/1",
+                "rtsp://admin:{password}@{ip}:{port}/h264/ch1/main/av_stream",
+                # Dahua
+                "rtsp://admin:{password}@{ip}:{port}/cam/realmonitor?channel=1&subtype=0",
+                "rtsp://admin:{password}@{ip}:{port}/cam/realmonitor?channel=1&subtype=1",
+                # Generic
+                "rtsp://admin:{password}@{ip}:{port}/stream1",
+                "rtsp://admin:{password}@{ip}:{port}/stream0",
+                "rtsp://admin:{password}@{ip}:{port}/video1",
+                "rtsp://admin:{password}@{ip}:{port}/video0",
+                "rtsp://admin:{password}@{ip}:{port}/1",
+                "rtsp://admin:{password}@{ip}:{port}/0",
+                # ONVIF
+                "rtsp://admin:{password}@{ip}:{port}/onvif1",
+                "rtsp://admin:{password}@{ip}:{port}/onvif/profile1/media.smp",
+                # No auth
+                "rtsp://{ip}:{port}/live/channel0",
+                "rtsp://{ip}:{port}/stream1",
+                # Alternative username
+                "rtsp://user:{password}@{ip}:{port}/stream1",
+                "rtsp://root:{password}@{ip}:{port}/stream1",
+            ]
+
             for ip, port in potential_cameras:
                 found_working_for_ip = False
+                tried_urls = []
+                
                 for password in passwords_to_try:
-                    if found_working_for_ip:
-                        break
-                    
-                    # Patterns to try
-                    patterns = [
-                        f"rtsp://admin:{password}@{ip}:{port}/live/channel0",
-                        f"rtsp://admin:{password}@{ip}:{port}/avstream/channel=1",
-                        f"rtsp://admin:{password}@{ip}:{port}/Streaming/Channels/101",
-                        f"rtsp://admin:{password}@{ip}:{port}/stream1",
-                        f"rtsp://admin:{password}@{ip}:{port}/onvif1",
-                        f"rtsp://admin:{password}@{ip}:{port}/h264/ch1/main/av_stream"
-                    ]
-
-                    for url in patterns:
-                        # Handle blank password by trying without credentials
+                    # 1. First, try standard RTSP_PATTERNS in order
+                    for pat in RTSP_PATTERNS:
+                        url = pat.format(password=password, ip=ip, port=port)
                         if password == "":
                             url = url.replace("admin:@", "")
-                        
-                        cap = cv2.VideoCapture(url)
-                        cap.set(cv2.CAP_PROP_OPEN_TIMEOUT_MSEC, 3000) # 3 seconds timeout
-                        ret, frame = cap.read()
-                        
-                        if ret and frame is not None:
-                            working_cameras.append((ip, port, url))
-                            print(f"✓ Camera found: {ip}:{port} — {url}")
-                            found_working_for_ip = True
-                            cap.release()
-                            break
+                            url = url.replace("user:@", "")
+                            url = url.replace("root:@", "")
+                        if url not in tried_urls:
+                            tried_urls.append(url)
+                    
+                    # 2. Also try all username variants for all paths to cover any missed combinations
+                    usernames = ["admin", "user", "root", ""]
+                    for username in usernames:
+                        for pat in RTSP_PATTERNS:
+                            parts = pat.split("{ip}:{port}/")
+                            if len(parts) < 2:
+                                continue
+                            path = parts[1]
+                            if username:
+                                if password:
+                                    url = f"rtsp://{username}:{password}@{ip}:{port}/{path}"
+                                else:
+                                    url = f"rtsp://{username}@{ip}:{port}/{path}"
+                            else:
+                                url = f"rtsp://{ip}:{port}/{path}"
+                            if url not in tried_urls:
+                                tried_urls.append(url)
+
+                for url in tried_urls:
+                    cap = cv2.VideoCapture(url)
+                    cap.set(cv2.CAP_PROP_OPEN_TIMEOUT_MSEC, 3000)  # 3 seconds timeout
+                    ret, frame = cap.read()
+                    
+                    if ret and frame is not None:
+                        working_cameras.append((ip, port, url))
+                        print(f"✓ Camera found: {ip}:{port} — {url}")
+                        found_working_for_ip = True
                         cap.release()
+                        break
+                    cap.release()
 
                 if not found_working_for_ip:
-                    print(f"✗ {ip} — no working stream found")
+                    print(f"✗ {ip}:{port} — tried {len(tried_urls)} patterns, none worked")
 
         # 3e. If no cameras found automatically
         if not working_cameras:
