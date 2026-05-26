@@ -299,22 +299,20 @@ class CameraWorker(threading.Thread):
         else:
             return self.target_fps
 
-    def calculate_priority(self, crops: List[Dict[str, Any]], calibration_mode: bool) -> int:
+    def calculate_priority(self, motion_pixel_count: int, calibration_mode: bool) -> int:
         """Deduce priority scale (1: Critical, 2: High, 3: Normal, 4: Low)"""
         if calibration_mode:
             return 1
             
         is_entrance = "entrance" in self.name.lower() or "cam1" in self.name.lower()
-        has_dense_motion = len(crops) >= 3
+        has_dense_motion = motion_pixel_count > 5000
         
         if is_entrance and has_dense_motion:
             return 1
         elif is_entrance or has_dense_motion:
             return 2
-        elif len(crops) > 0:
-            return 3
         else:
-            return 4
+            return 3
 
     def connect(self):
         """Establishes connection to the RTSP stream."""
@@ -336,148 +334,6 @@ class CameraWorker(threading.Thread):
             logger.error(f"Failed to open stream {self.url}")
             return False
         return True
-
-    def merge_overlapping_crops(self, rects: List[Tuple[int, int, int, int]]) -> List[Tuple[int, int, int, int]]:
-        """
-        Merges bounding boxes that are within 100px of each other into a single
-        union bounding box. This prevents sending many tiny motion blobs when a
-        single person is the source.
-
-        Iterates until no further merges are possible (handles chain merges).
-        """
-        if not rects:
-            return []
-
-        PROXIMITY = 100  # px — merge if this close on any axis
-
-        def expand(r: Tuple[int, int, int, int]) -> Tuple[int, int, int, int]:
-            """Expand rect by PROXIMITY for overlap testing."""
-            x, y, w, h = r
-            return (x - PROXIMITY, y - PROXIMITY, w + 2 * PROXIMITY, h + 2 * PROXIMITY)
-
-        def overlaps(a: Tuple[int, int, int, int], b: Tuple[int, int, int, int]) -> bool:
-            """True if expanded version of a overlaps b."""
-            ax, ay, aw, ah = expand(a)
-            bx, by, bw, bh = b
-            return ax < bx + bw and ax + aw > bx and ay < by + bh and ay + ah > by
-
-        def union(a: Tuple[int, int, int, int], b: Tuple[int, int, int, int]) -> Tuple[int, int, int, int]:
-            ax1, ay1, aw, ah = a
-            bx1, by1, bw, bh = b
-            x1 = min(ax1, bx1)
-            y1 = min(ay1, by1)
-            x2 = max(ax1 + aw, bx1 + bw)
-            y2 = max(ay1 + ah, by1 + bh)
-            return (x1, y1, x2 - x1, y2 - y1)
-
-        merged = list(rects)
-        changed = True
-        while changed:
-            changed = False
-            result = []
-            used = [False] * len(merged)
-            for i in range(len(merged)):
-                if used[i]:
-                    continue
-                cur = merged[i]
-                for j in range(i + 1, len(merged)):
-                    if used[j]:
-                        continue
-                    if overlaps(cur, merged[j]):
-                        cur = union(cur, merged[j])
-                        used[j] = True
-                        changed = True
-                result.append(cur)
-            merged = result
-
-        return merged
-
-    def extract_crops(self, frame: np.ndarray, mask: np.ndarray, camera_id: str = "") -> List[Dict[str, Any]]:
-        """Finds motion contours, merges nearby ones, extracts padded crops, and returns payload dicts."""
-        H, W = frame.shape[:2]
-
-        # Minimum crop dimensions YOLO can usefully process for person detection
-        MIN_CROP_W, MIN_CROP_H = 200, 200
-        MAX_CROP_DIM = 640  # resize if larger
-        PADDING = 50        # px to expand bbox on all sides
-
-        # Find contours in the motion mask
-        contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-
-        raw_rects: List[Tuple[int, int, int, int]] = []
-        for c in contours:
-            area = cv2.contourArea(c)
-            if area < MIN_CONTOUR_AREA:
-                continue  # Ignore dust, insects, tiny movements
-            x, y, w, h = cv2.boundingRect(c)
-            raw_rects.append((x, y, w, h))
-
-        if not raw_rects:
-            return []
-
-        # Merge nearby bounding boxes (within 100px) into a single person-region
-        merged_rects = self.merge_overlapping_crops(raw_rects)
-
-        crops_data = []
-        for i, (x, y, w, h) in enumerate(merged_rects):
-            x, y, w, h = int(x), int(y), int(w), int(h)
-
-            # Add 50px padding on all sides, clipped to frame boundaries
-            px1 = max(0, x - PADDING)
-            py1 = max(0, y - PADDING)
-            px2 = min(W, x + w + PADDING)
-            py2 = min(H, y + h + PADDING)
-
-            crop_w = px2 - px1
-            crop_h = py2 - py1
-
-            # Skip crops that are still too small for YOLO to detect a person
-            if crop_w < MIN_CROP_W or crop_h < MIN_CROP_H:
-                logger.info(
-                    f"[{camera_id}] Skipping crop {i}: {crop_w}x{crop_h}px — "
-                    f"below minimum {MIN_CROP_W}x{MIN_CROP_H}px"
-                )
-                continue
-
-            crop_img = frame[py1:py2, px1:px2]
-
-            # Resize crop if larger than 640x640, preserving aspect ratio
-            ch, cw = crop_img.shape[:2]
-            if cw > MAX_CROP_DIM or ch > MAX_CROP_DIM:
-                scale = MAX_CROP_DIM / max(ch, cw)
-                crop_img = cv2.resize(
-                    crop_img,
-                    (int(cw * scale), int(ch * scale)),
-                    interpolation=cv2.INTER_AREA
-                )
-                ch, cw = crop_img.shape[:2]
-
-            logger.info(f"[{camera_id}] Sending crop {i}: {cw}x{ch}px")
-
-            # JPEG encode at quality=75 (better than 60 for detection accuracy)
-            encode_param = [int(cv2.IMWRITE_JPEG_QUALITY), 75]
-            success, encoded_img = cv2.imencode('.jpg', crop_img, encode_param)
-
-            if success:
-                b64_str = base64.b64encode(encoded_img).decode('utf-8')
-
-                # Normalised bbox coords 0–1 (relative to original frame)
-                norm_bbox = [
-                    float(px1 / W),
-                    float(py1 / H),
-                    float((px2 - px1) / W),
-                    float((py2 - py1) / H)
-                ]
-
-                crops_data.append({
-                    "bbox": norm_bbox,
-                    "jpeg_b64": b64_str,
-                    "area": int(crop_w * crop_h)
-                })
-
-        # Sort by area descending (largest = most likely a full person), cap at 10
-        crops_data.sort(key=lambda c: c["area"], reverse=True)
-        return crops_data[:10]
 
     def stop(self):
         self.running = False
@@ -530,33 +386,30 @@ class CameraWorker(threading.Thread):
                 motion_pixel_count = cv2.countNonZero(mask)
                 logger.info(f"[{camera_id}] Motion pixels: {motion_pixel_count} threshold: {MOTION_THRESHOLD}")
                 
-                # Extract crops (pass camera_id for logging)
-                crops = self.extract_crops(frame, mask, camera_id=camera_id)
-                logger.info(f"[{camera_id}] Crops extracted: {len(crops)}")
+                # Still detect motion with MOG2 — if no motion, skip sending
+                contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+                has_motion = any(cv2.contourArea(c) >= MIN_CONTOUR_AREA for c in contours)
                 
-                # Only construct and send payload if there is motion OR if we need to send full frames in calibration
-                full_frame_b64 = None
-                # Send full frame every 10th frame in ALL modes:
-                #   - calibration: needed for QR / homography
-                #   - normal: needed for live snapshot viewer (GET /api/live/snapshot)
-                if self.frame_count % 10 == 0:
-                    ff_resized = cv2.resize(frame, (640, 480))
-                    _, ff_enc = cv2.imencode('.jpg', ff_resized, [int(cv2.IMWRITE_JPEG_QUALITY), 60])
-                    full_frame_b64 = base64.b64encode(ff_enc).decode('utf-8')
-
-                if crops or full_frame_b64:
-                    payload = {
-                        "store_id": self.store_id,
-                        "camera_id": self.name,
-                        "timestamp": datetime.now(timezone.utc).isoformat(),
-                        "frame_id": self.frame_count,
-                        "frame_resolution": [W, H],
-                        "calibration_mode": calibration_mode,
-                        "crops": crops,
-                        "full_frame_b64": full_frame_b64,
-                        "priority": self.calculate_priority(crops, calibration_mode)
-                    }
-                    self.uploader.enqueue(payload)
+                if has_motion or calibration_mode:
+                    # Every frame: compress full frame to JPEG at 60% quality
+                    encode_param = [int(cv2.IMWRITE_JPEG_QUALITY), 60]
+                    success, ff_enc = cv2.imencode('.jpg', frame, encode_param)
+                    if success:
+                        full_frame_b64 = base64.b64encode(ff_enc).decode('utf-8')
+                        payload = {
+                            "store_id": self.store_id,
+                            "camera_id": self.name,
+                            "timestamp": datetime.now(timezone.utc).isoformat(),
+                            "frame_id": self.frame_count,
+                            "frame_resolution": [W, H],
+                            "calibration_mode": calibration_mode,
+                            "crops": [], # always empty
+                            "full_frame_b64": full_frame_b64,
+                            "motion_pixels": int(motion_pixel_count),
+                            "priority": self.calculate_priority(motion_pixel_count, calibration_mode)
+                        }
+                        self.uploader.enqueue(payload)
+                        logger.info(f"[{camera_id}] Sent motion full-frame (frame_id: {self.frame_count}, pixels: {motion_pixel_count})")
                 
                 # Control frame rate by sleeping remainder of the target delay
                 elapsed = time.time() - start_time

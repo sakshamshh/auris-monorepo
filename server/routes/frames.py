@@ -119,111 +119,97 @@ class FramePayload(BaseModel):
     floor_id: Optional[str] = "floor_0"
 
 
-def run_inference_and_tracking(payload: FramePayload) -> Tuple[List, List, bool]:
-    """Returns (deepsort_detections, crop_meta for training, fire_detected)."""
+def blur_faces(frame, detections):
+    for det in detections:
+        x1, y1, x2, y2 = det['bbox_abs']
+        # Blur the top 30% of each person bounding box (face area)
+        face_h = int((y2 - y1) * 0.35)
+        face_region = frame[int(y1):int(y1)+face_h, int(x1):int(x2)]
+        if face_region.size > 0:
+            blurred = cv2.GaussianBlur(face_region, (99, 99), 30)
+            frame[int(y1):int(y1)+face_h, int(x1):int(x2)] = blurred
+    return frame
+
+
+def run_inference_and_tracking(payload: FramePayload) -> Tuple[List, List, bool, Optional[np.ndarray]]:
+    """Returns (deepsort_detections, crop_meta for training, fire_detected, blurred_full_img)."""
     if not MODEL:
         logger.warning("YOLO model not loaded — skipping inference")
-        return [], [], False
+        return [], [], False, None
 
     deepsort_detections = []
     crop_meta = []
     fire_detected = False
+    blurred_img = None
     W_orig, H_orig = payload.frame_resolution
 
-    # Full frame inference if crops are empty but full_frame_b64 is provided
-    if not payload.crops and payload.full_frame_b64:
+    if payload.full_frame_b64:
         try:
             img_data = base64.b64decode(payload.full_frame_b64)
             np_arr = np.frombuffer(img_data, np.uint8)
             full_img = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
             if full_img is not None:
+                fh, fw = full_img.shape[:2]
+                
+                # 1. Run YOLOv8 on full frame: conf=0.25, classes=[0] (person)
                 results = MODEL(full_img, conf=0.25, classes=[0], verbose=False)
+                
+                yolo_dets = []
                 for r in results:
                     for box in r.boxes:
                         x1, y1, x2, y2 = box.xyxy[0].tolist()
                         conf = float(box.conf[0])
-                        abs_x = max(0, min(int(x1), W_orig - 1))
-                        abs_y = max(0, min(int(y1), H_orig - 1))
+                        
+                        abs_x = max(0, min(int(x1), fw - 1))
+                        abs_y = max(0, min(int(y1), fh - 1))
                         abs_w = max(1, int(x2 - x1))
                         abs_h = max(1, int(y2 - y1))
-                        if abs_x + abs_w > W_orig:
-                            abs_w = W_orig - abs_x
-                        if abs_y + abs_h > H_orig:
-                            abs_h = H_orig - abs_y
-                        deepsort_detections.append(([abs_x, abs_y, abs_w, abs_h], conf, "person"))
+                        if abs_x + abs_w > fw:
+                            abs_w = fw - abs_x
+                        if abs_y + abs_h > fh:
+                            abs_h = fh - abs_y
+                            
+                        yolo_dets.append({
+                            'bbox_abs': [abs_x, abs_y, abs_x + abs_w, abs_y + abs_h],
+                            'bbox_wh': [abs_x, abs_y, abs_w, abs_h],
+                            'conf': conf
+                        })
+                
+                # 2. Draw/blur faces BEFORE storing or training
+                full_img = blur_faces(full_img, yolo_dets)
+                blurred_img = full_img
+                
+                # 3. Form DeepSort detections & extract person crops from the already blurred full_img
+                for det in yolo_dets:
+                    conf = det['conf']
+                    abs_x, abs_y, abs_w, abs_h = det['bbox_wh']
+                    
+                    deepsort_detections.append(([abs_x, abs_y, abs_w, abs_h], conf, "person"))
+                    
+                    # For training / hard cases / pseudo labels: save full frame crops not tiny motion blobs
+                    if (0.15 <= conf < 0.50) or conf > 0.85:
+                        crop_img = blurred_img[abs_y:abs_y+abs_h, abs_x:abs_x+abs_w]
+                        if crop_img.size > 0:
+                            _, crop_buf = cv2.imencode('.jpg', crop_img, [int(cv2.IMWRITE_JPEG_QUALITY), 75])
+                            crop_b64 = base64.b64encode(crop_buf).decode('utf-8')
+                            
+                            norm_bbox = [abs_x / fw, abs_y / fh, abs_w / fw, abs_h / fh]
+                            crop_meta.append({
+                                "jpeg_b64": crop_b64,
+                                "bbox": norm_bbox,
+                                "max_conf": conf,
+                            })
+                
+                # Run Fire model on full frame if loaded
+                if FIRE_MODEL:
+                    for r in FIRE_MODEL(full_img, conf=0.5, verbose=False):
+                        if len(r.boxes) > 0:
+                            fire_detected = True
+                            
         except Exception as e:
-            logger.warning("Full frame error: %s", e)
+            logger.warning("Full frame inference error: %s", e)
 
-    for i, crop in enumerate(payload.crops):
-        try:
-            img_data = base64.b64decode(crop.jpeg_b64)
-            np_arr = np.frombuffer(img_data, np.uint8)
-            crop_img = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
-            if crop_img is None:
-                logger.warning(f"Crop {i}: failed to decode image")
-                continue
-
-            crop_h, crop_w = crop_img.shape[:2]
-
-            # Skip crops that are too small for YOLO to process reliably
-            if crop_w < 64 or crop_h < 64:
-                logger.info(f"Crop {i}: skipping — too small ({crop_w}x{crop_h})")
-                continue
-
-            cx_norm, cy_norm, cw_norm, ch_norm = crop.bbox
-
-            if FIRE_MODEL:
-                for r in FIRE_MODEL(crop_img, conf=0.5, verbose=False):
-                    if len(r.boxes) > 0:
-                        fire_detected = True
-
-            # --- Restore conf=0.25, classes=[0] for person only ---
-            results = MODEL(crop_img, conf=0.25, classes=[0], verbose=False)
-            max_conf = 0.0
-            crop_detections = []
-            for r in results:
-                detected_classes = [MODEL.names[int(b.cls[0])] for b in r.boxes]
-                logger.info(
-                    f"Crop {i}: size=({crop_w}x{crop_h}), "
-                    f"detections={len(r.boxes)}, classes={detected_classes}"
-                )
-                if len(r.boxes) == 0:
-                    logger.info(f"Crop {i}: No detection in crop")
-                for box in r.boxes:
-                    cls_name = MODEL.names[int(box.cls[0])]
-                    x1, y1, x2, y2 = box.xyxy[0].tolist()
-                    conf = float(box.conf[0])
-                    max_conf = max(max_conf, conf)
-
-                    # Only feed person detections into DeepSort tracker
-                    if cls_name == "person":
-                        nx1, ny1 = x1 / crop_w, y1 / crop_h
-                        nx2, ny2 = x2 / crop_w, y2 / crop_h
-                        ff_nx1 = cx_norm + (nx1 * cw_norm)
-                        ff_ny1 = cy_norm + (ny1 * ch_norm)
-                        ff_nw = (nx2 - nx1) * cw_norm
-                        ff_nh = (ny2 - ny1) * ch_norm
-                        abs_x = max(0, min(int(ff_nx1 * W_orig), W_orig - 1))
-                        abs_y = max(0, min(int(ff_ny1 * H_orig), H_orig - 1))
-                        abs_w = max(1, int(ff_nw * W_orig))
-                        abs_h = max(1, int(ff_nh * H_orig))
-                        if abs_x + abs_w > W_orig:
-                            abs_w = W_orig - abs_x
-                        if abs_y + abs_h > H_orig:
-                            abs_h = H_orig - abs_y
-                        deepsort_detections.append(([abs_x, abs_y, abs_w, abs_h], conf, "person"))
-                        crop_detections.append({"abs_bbox": [abs_x, abs_y, abs_w, abs_h], "conf": conf})
-
-            crop_meta.append({
-                "jpeg_b64": crop.jpeg_b64,
-                "bbox": crop.bbox,
-                "max_conf": max_conf,
-                "detections": crop_detections,
-            })
-        except Exception as e:
-            logger.warning("Crop error: %s", e)
-
-    return deepsort_detections, crop_meta, fire_detected
+    return deepsort_detections, crop_meta, fire_detected, blurred_img
 
 
 # Module-level asyncio PriorityQueue, lock state, and parked buffers
@@ -246,11 +232,11 @@ async def execute_frame_inference_and_tracking(payload: FramePayload, api_key: s
         c_id = payload.camera_id
         floor_id = payload.floor_id or "floor_0"
 
-        if not payload.crops and not (payload.calibration_mode and payload.full_frame_b64):
+        if not payload.full_frame_b64:
             return
 
         loop = asyncio.get_event_loop()
-        ds_detections, crop_meta, fire_detected = await loop.run_in_executor(
+        ds_detections, crop_meta, fire_detected, blurred_img = await loop.run_in_executor(
             None, run_inference_and_tracking, payload
         )
 
@@ -288,6 +274,16 @@ async def execute_frame_inference_and_tracking(payload: FramePayload, api_key: s
         zone_config = (store_config or {}).get("zone_config", {})
         counting_line_y = (store_config or {}).get("counting_line_y", 0.5)
         max_capacity = (store_config or {}).get("max_capacity", 100)
+
+        # Get factory config to check privacy_mode
+        factory_config = await db._db.factory_config.find_one({"store_id": s_id})
+        privacy_mode = False
+        if factory_config:
+            privacy_mode = factory_config.get("privacy_mode", False)
+        else:
+            store_name = (store_config or {}).get("store_name", s_id)
+            if "hospital" in s_id.lower() or "hospital" in store_name.lower() or "hosp" in s_id.lower() or "hosp" in store_name.lower():
+                privacy_mode = True
 
         calib_saved = False
         if payload.calibration_mode and payload.full_frame_b64:
@@ -394,7 +390,7 @@ async def execute_frame_inference_and_tracking(payload: FramePayload, api_key: s
         people_now = len(final_detections)
         logger.info(
             f"Frame {payload.frame_id} from {c_id}: "
-            f"{len(payload.crops)} crops received, {people_now} people detected"
+            f"people_now={people_now} detected"
         )
         if people_now > max_capacity:
             await dispatch_overcrowding_alert(s_id, people_now, max_capacity)
@@ -406,89 +402,50 @@ async def execute_frame_inference_and_tracking(payload: FramePayload, api_key: s
         frame_key_full = f"{s_id_low}_{c_id_low}_full"
         frame_key_crop = f"{s_id_low}_{c_id_low}_crop"
 
-        if payload.full_frame_b64:
+        if not privacy_mode and blurred_img is not None:
             try:
-                img_data = base64.b64decode(payload.full_frame_b64)
-                np_arr = np.frombuffer(img_data, np.uint8)
-                frame = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
-                if frame is not None:
-                    fh, fw = frame.shape[:2]
-                    # Draw green boxes for each detection
-                    for det in final_detections:
-                        bn = det.get("bbox_normalised", [])
-                        if len(bn) == 4:
-                            x1 = int(bn[0] * fw)
-                            y1 = int(bn[1] * fh)
-                            x2 = int(bn[2] * fw)
-                            y2 = int(bn[3] * fh)
-                        else:
-                            x1, y1, x2, y2 = det.get('bbox_abs', [0, 0, 50, 50])
-                        cv2.rectangle(frame, (int(x1), int(y1)), (int(x2), int(y2)), (0, 255, 0), 2)
-                    # Draw people count
-                    cv2.putText(frame, f'{people_now} people', (10, 30),
-                               cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
-                    _, buf = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 70])
-                    frame_b64 = base64.b64encode(buf).decode()
-                    
-                    snapshot_data = {
-                        'frame_b64': frame_b64,
-                        'timestamp': datetime.now(timezone.utc).isoformat(),
-                        'people_now': people_now,
-                        'camera_id': c_id_low,
-                        'store_id': s_id_low
-                    }
-                    latest_frames[frame_key] = snapshot_data
-                    latest_frames[frame_key_full] = snapshot_data
-                    logger.info(f"Stored full frame snapshot for {frame_key}, people={people_now}")
+                frame = blurred_img.copy()
+                fh, fw = frame.shape[:2]
+                # Draw green boxes for each detection
+                for det in final_detections:
+                    bn = det.get("bbox_normalised", [])
+                    if len(bn) == 4:
+                        x1 = int(bn[0] * fw)
+                        y1 = int(bn[1] * fh)
+                        x2 = int(bn[2] * fw)
+                        y2 = int(bn[3] * fh)
+                    else:
+                        x1, y1, x2, y2 = det.get('bbox_abs', [0, 0, 50, 50])
+                    cv2.rectangle(frame, (int(x1), int(y1)), (int(x2), int(y2)), (0, 255, 0), 2)
+                # Draw people count
+                cv2.putText(frame, f'{people_now} people', (10, 30),
+                           cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
+                _, buf = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 70])
+                frame_b64 = base64.b64encode(buf).decode()
+                
+                snapshot_data = {
+                    'frame_b64': frame_b64,
+                    'timestamp': datetime.now(timezone.utc).isoformat(),
+                    'people_now': people_now,
+                    'camera_id': c_id_low,
+                    'store_id': s_id_low
+                }
+                latest_frames[frame_key] = snapshot_data
+                latest_frames[frame_key_full] = snapshot_data
+                logger.info(f"Stored full frame snapshot for {frame_key}, people={people_now}")
             except Exception as snap_err:
                 logger.warning(f"Snapshot annotation error: {snap_err}")
-        elif crop_meta:
-            try:
-                first_crop = crop_meta[0]
-                crop_b64 = first_crop["jpeg_b64"]
-                
-                c_data = base64.b64decode(crop_b64)
-                c_arr = np.frombuffer(c_data, np.uint8)
-                c_img = cv2.imdecode(c_arr, cv2.IMREAD_COLOR)
-                if c_img is not None:
-                    ch, cw = c_img.shape[:2]
-                    for det in first_crop.get("detections", []):
-                        abs_bbox = det.get("abs_bbox", [])
-                        if len(abs_bbox) == 4:
-                            cx_norm, cy_norm, cw_norm, ch_norm = first_crop["bbox"]
-                            W_orig, H_orig = payload.frame_resolution
-                            crop_x = int(cx_norm * W_orig)
-                            crop_y = int(cy_norm * H_orig)
-                            
-                            rx1 = max(0, abs_bbox[0] - crop_x)
-                            ry1 = max(0, abs_bbox[1] - crop_y)
-                            rx2 = min(cw, rx1 + abs_bbox[2])
-                            ry2 = min(ch, ry1 + abs_bbox[3])
-                            
-                            cv2.rectangle(c_img, (rx1, ry1), (rx2, ry2), (0, 255, 0), 2)
-                            cv2.putText(c_img, "Person", (rx1, max(ry1 - 6, 10)),
-                                        cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0, 255, 0), 1)
-                    if not first_crop.get("detections"):
-                        cv2.rectangle(c_img, (0, 0), (cw - 1, ch - 1), (0, 255, 0), 2)
-                        cv2.putText(c_img, "Motion Crop", (10, 20),
-                                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1)
-                    
-                    _, buf = cv2.imencode(".jpg", c_img, [cv2.IMWRITE_JPEG_QUALITY, 70])
-                    annotated_crop_b64 = base64.b64encode(buf).decode("utf-8")
-                    
-                    crop_snapshot_data = {
-                        "frame_b64": annotated_crop_b64,
-                        "timestamp": payload.timestamp,
-                        "people_now": people_now,
-                        "camera_id": c_id_low,
-                        "store_id": s_id_low,
-                    }
-                    
-                    latest_frames[frame_key_crop] = crop_snapshot_data
-                    latest_frames[frame_key] = crop_snapshot_data
-                    logger.info(f"Stored crop snapshot for {frame_key}, people={people_now}")
-            except Exception as crop_snap_err:
-                logger.warning(f"Crop snapshot error: {crop_snap_err}")
+        elif privacy_mode:
+            # Store only people_now count, no frame base64
+            snapshot_data = {
+                'timestamp': datetime.now(timezone.utc).isoformat(),
+                'people_now': people_now,
+                'camera_id': c_id_low,
+                'store_id': s_id_low
+            }
+            latest_frames[frame_key] = snapshot_data
+            latest_frames[frame_key_full] = snapshot_data
+            logger.info(f"Privacy Mode: Stored snapshot count for {frame_key}, people={people_now}")
 
         for tid in list(track_positions[s_id][c_id].keys()):
             if tid not in current_ids:
@@ -499,17 +456,25 @@ async def execute_frame_inference_and_tracking(payload: FramePayload, api_key: s
         # Always guarantee latest_frames is not empty for this camera
         key = f"{s_id}_{c_id}".lower()
         if key not in latest_frames:
-            placeholder = np.zeros((360, 640, 3), dtype=np.uint8)
-            cv2.putText(placeholder, f'{s_id}/{c_id}', (50, 180), 
-                        cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2)
-            _, buf = cv2.imencode('.jpg', placeholder)
-            latest_frames[key] = {
-                'frame_b64': base64.b64encode(buf).decode(),
-                'timestamp': datetime.now(timezone.utc).isoformat(),
-                'people_now': people_now,
-                'camera_id': c_id.lower(),
-                'store_id': s_id.lower()
-            }
+            if not privacy_mode:
+                placeholder = np.zeros((360, 640, 3), dtype=np.uint8)
+                cv2.putText(placeholder, f'{s_id}/{c_id}', (50, 180), 
+                            cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2)
+                _, buf = cv2.imencode('.jpg', placeholder)
+                latest_frames[key] = {
+                    'frame_b64': base64.b64encode(buf).decode(),
+                    'timestamp': datetime.now(timezone.utc).isoformat(),
+                    'people_now': people_now,
+                    'camera_id': c_id.lower(),
+                    'store_id': s_id.lower()
+                }
+            else:
+                latest_frames[key] = {
+                    'timestamp': datetime.now(timezone.utc).isoformat(),
+                    'people_now': people_now,
+                    'camera_id': c_id.lower(),
+                    'store_id': s_id.lower()
+                }
 
         blob_doc = {
             "store_id": s_id,
@@ -670,6 +635,18 @@ async def get_live_snapshot_impl(request: Request, store_id: str, camera_id: str
     if not is_valid:
         raise HTTPException(status_code=403, detail="Invalid admin session token or key")
 
+    # Check privacy mode
+    factory_config = await db._db.factory_config.find_one({"store_id": store_id})
+    privacy_mode = False
+    if factory_config:
+        privacy_mode = factory_config.get("privacy_mode", False)
+    else:
+        if "hospital" in store_id.lower() or "hosp" in store_id.lower():
+            privacy_mode = True
+            
+    if privacy_mode:
+        raise HTTPException(status_code=403, detail="Stream viewer disabled for this client due to privacy mode")
+
     store_id_low = store_id.lower()
     camera_id_low = camera_id.lower()
 
@@ -714,3 +691,175 @@ async def get_live_snapshot(request: Request, store_id: str, camera_id: str):
 async def get_live_snapshot_path(request: Request, store_id: str, camera_id: str):
     """Returns the latest annotated frame/crop for a given camera via path parameters."""
     return await get_live_snapshot_impl(request, store_id, camera_id)
+
+
+@router.get("/api/live/cameras")
+async def get_live_cameras(request: Request, key: Optional[str] = None):
+    """Returns a list of all configured stores and cameras, including active in-memory cameras."""
+    from db import ADMIN_KEY
+    expected_key = ADMIN_KEY or "dcd62cb40e5fa0870d73c79fbd521d05"
+    admin_key = key or request.query_params.get("key", "") or request.headers.get("X-Admin-Key", "")
+    if not admin_key or admin_key != expected_key:
+        raise HTTPException(status_code=403, detail="Invalid admin session token or key")
+
+    # Fetch all stores from database
+    stores_cursor = db.stores.find({}, {"store_id": 1, "store_name": 1})
+    stores = {}
+    async for s in stores_cursor:
+        sid = s["store_id"]
+        stores[sid] = {
+            "store_name": s.get("store_name", sid),
+            "cameras": []
+        }
+    
+    # Fetch all cameras from database
+    cameras_cursor = db.cameras.find({}, {"store_id": 1, "camera_id": 1, "name": 1})
+    async for c in cameras_cursor:
+        sid = c["store_id"]
+        if sid in stores:
+            stores[sid]["cameras"].append({
+                "camera_id": c["camera_id"],
+                "name": c.get("name", c["camera_id"])
+            })
+            
+    # Include dynamic cameras found in latest_frames
+    for k in list(latest_frames.keys()):
+        # Exclude suffix entries to avoid duplicate items
+        if k.endswith("_full") or k.endswith("_crop"):
+            continue
+        parts = k.split("_")
+        if len(parts) >= 2:
+            s_id = parts[0]
+            c_id = "_".join(parts[1:])
+            if s_id not in stores:
+                stores[s_id] = {"store_name": s_id, "cameras": []}
+            if not any(cam["camera_id"] == c_id for cam in stores[s_id]["cameras"]):
+                stores[s_id]["cameras"].append({
+                    "camera_id": c_id,
+                    "name": c_id
+                })
+
+    return {"stores": stores}
+
+
+@router.get("/api/live/stream/{store_id}/{camera_id}")
+async def get_live_stream(request: Request, store_id: str, camera_id: str, key: Optional[str] = None, frames_limit: Optional[int] = None):
+    """Serves a real-time MJPEG (multipart/x-mixed-replace) stream of annotated frames."""
+    from db import ADMIN_KEY
+    expected_key = ADMIN_KEY or "dcd62cb40e5fa0870d73c79fbd521d05"
+    admin_key = key or request.query_params.get("key", "") or request.headers.get("X-Admin-Key", "")
+    if not admin_key or admin_key != expected_key:
+        raise HTTPException(status_code=403, detail="Invalid admin session token or key")
+
+    # Check privacy mode
+    factory_config = await db._db.factory_config.find_one({"store_id": store_id})
+    privacy_mode = False
+    if factory_config:
+        privacy_mode = factory_config.get("privacy_mode", False)
+    else:
+        if "hospital" in store_id.lower() or "hosp" in store_id.lower():
+            privacy_mode = True
+            
+    if privacy_mode:
+        raise HTTPException(status_code=403, detail="Stream viewer disabled for this client due to privacy mode")
+
+    store_id_low = store_id.lower()
+    camera_id_low = camera_id.lower()
+
+    key_full = f"{store_id_low}_{camera_id_low}_full"
+    key_crop = f"{store_id_low}_{camera_id_low}_crop"
+    key_std = f"{store_id_low}_{camera_id_low}"
+
+    async def mjpeg_generator():
+        logger.info(f"Started MJPEG stream for {store_id}/{camera_id}")
+        frames_sent = 0
+        try:
+            while True:
+                # 1. Retrieve latest frame from latest_frames cache with suffix priority fallback
+                snapshot = latest_frames.get(key_full) or latest_frames.get(key_crop) or latest_frames.get(key_std)
+
+                # Fallback to case-insensitive key matching
+                if not snapshot:
+                    for suffix in ["_full", "_crop", ""]:
+                        target_key = f"{store_id_low}_{camera_id_low}{suffix}"
+                        for k, v in latest_frames.items():
+                            if k.lower() == target_key.lower():
+                                snapshot = v
+                                break
+                        if snapshot:
+                            break
+
+                frame_bytes = None
+                if snapshot and "frame_b64" in snapshot:
+                    try:
+                        # Decode the stored frame
+                        img_data = base64.b64decode(snapshot["frame_b64"])
+                        np_arr = np.frombuffer(img_data, np.uint8)
+                        frame = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
+
+                        if frame is not None:
+                            # 2. Add timestamp overlay
+                            frame_time_str = snapshot.get("timestamp", "N/A")
+                            try:
+                                dt = datetime.fromisoformat(frame_time_str.replace("Z", "+00:00"))
+                                formatted_time = dt.strftime("%Y-%m-%d %H:%M:%S UTC")
+                            except Exception:
+                                formatted_time = frame_time_str
+
+                            current_time = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S.%f")[:-3] + " UTC (Server)"
+                            overlay_text = f"Frame: {formatted_time} | Live: {current_time}"
+
+                            fh, fw = frame.shape[:2]
+                            font = cv2.FONT_HERSHEY_SIMPLEX
+                            font_scale = 0.5
+                            thickness = 1
+                            
+                            (text_w, text_h), baseline = cv2.getTextSize(overlay_text, font, font_scale, thickness)
+                            x_offset = 10
+                            y_offset = fh - 15
+
+                            # Draw highly legible semi-transparent background box for timestamp
+                            cv2.rectangle(frame, (x_offset - 5, y_offset - text_h - 5), (x_offset + text_w + 5, y_offset + 5), (0, 0, 0), -1)
+                            cv2.putText(frame, overlay_text, (x_offset, y_offset), font, font_scale, (0, 255, 0), thickness, cv2.LINE_AA)
+
+                            # Re-encode to JPEG
+                            _, buf = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 70])
+                            frame_bytes = buf.tobytes()
+                    except Exception as snap_err:
+                        logger.warning(f"Error decoding frame for stream {store_id}/{camera_id}: {snap_err}")
+
+                if frame_bytes is None:
+                    # 3. Serve a black placeholder with "No signal" text if no frame is stored
+                    placeholder = np.zeros((480, 640, 3), dtype=np.uint8)
+                    cv2.putText(placeholder, "NO SIGNAL", (180, 220), cv2.FONT_HERSHEY_SIMPLEX, 1.5, (0, 0, 255), 3, cv2.LINE_AA)
+                    cv2.putText(placeholder, f"Camera: {store_id}/{camera_id}", (80, 280), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (200, 200, 200), 2, cv2.LINE_AA)
+                    
+                    current_time = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S.%f")[:-3] + " UTC"
+                    cv2.putText(placeholder, current_time, (80, 320), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (150, 150, 150), 1, cv2.LINE_AA)
+                    
+                    _, buf = cv2.imencode('.jpg', placeholder, [cv2.IMWRITE_JPEG_QUALITY, 70])
+                    frame_bytes = buf.tobytes()
+
+                # Yield in standard multipart/x-mixed-replace format
+                yield (b'--frame\r\n'
+                       b'Content-Type: image/jpeg\r\n'
+                       b'Content-Length: ' + str(len(frame_bytes)).encode() + b'\r\n\r\n' +
+                       frame_bytes + b'\r\n')
+
+                frames_sent += 1
+                if frames_limit is not None and frames_sent >= frames_limit:
+                    logger.info(f"Reached frames limit ({frames_limit}). Exiting stream.")
+                    break
+
+                # Sleep 500ms between frames
+                await asyncio.sleep(0.5)
+
+        except asyncio.CancelledError:
+            logger.info(f"MJPEG stream client disconnected for {store_id}/{camera_id}")
+        except GeneratorExit:
+            logger.info(f"MJPEG stream generator exited for {store_id}/{camera_id}")
+        except Exception as e:
+            logger.error(f"Error in MJPEG stream loop for {store_id}/{camera_id}: {e}", exc_info=True)
+
+    from fastapi.responses import StreamingResponse
+    return StreamingResponse(mjpeg_generator(), media_type="multipart/x-mixed-replace; boundary=frame")

@@ -19,7 +19,7 @@ try:
 except ImportError:
     from db import get_database as get_db
 
-from db import get_store_auth
+from db import get_store_auth, get_store_by_api_key
 from utils.groq_client import get_narrative
 
 
@@ -408,3 +408,70 @@ async def get_patterns(request: Request):
         "patterns": serialized_patterns,
         "narrative": narrative
     }
+
+
+@router.get("/api/edge/config")
+async def get_edge_config(request: Request):
+    """
+    Get or auto-create edge device configuration for a factory by API key.
+    Does not throw 404 for valid API key.
+    """
+    api_key = request.headers.get("X-API-Key", "").strip()
+    if not api_key:
+        logger.warning("GET edge config request missing X-API-Key header")
+        raise HTTPException(status_code=401, detail="Missing X-API-Key header")
+        
+    store = await get_store_by_api_key(api_key)
+    if not store:
+        logger.warning("GET edge config request has invalid API key: %s", api_key)
+        raise HTTPException(status_code=401, detail="Invalid API key")
+        
+    store_id = store["store_id"]
+    raw_db = _get_raw_db()
+    
+    # Retrieve factory_config document
+    config = await raw_db.factory_config.find_one({"store_id": store_id})
+    
+    store_name = store.get("store_name", store_id)
+    is_hosp = "hospital" in store_id.lower() or "hospital" in store_name.lower() or "hosp" in store_id.lower() or "hosp" in store_name.lower()
+
+    if not config:
+        logger.info("Factory config not found for store %s, auto-creating minimal", store_id)
+        now_iso = datetime.now(timezone.utc).isoformat()
+        config = {
+            "store_id": store_id,
+            "factory_name": store_name,
+            "location": store.get("city", "Chennai"),
+            "city": store.get("city", "Chennai"),
+            "status": "pending",
+            "trial_start": now_iso,
+            "trial_end": (datetime.now(timezone.utc) + timedelta(days=30)).isoformat(),
+            "shifts": [],
+            "worker_categories": [],
+            "cameras": [],
+            "whatsapp_number": "",
+            "whatsAppNumber": "",
+            "privacy_mode": is_hosp,
+            "created_at": now_iso,
+            "updated_at": now_iso
+        }
+        await raw_db.factory_config.insert_one(config)
+    else:
+        if "privacy_mode" not in config:
+            config["privacy_mode"] = is_hosp
+            await raw_db.factory_config.update_one(
+                {"store_id": store_id},
+                {"$set": {"privacy_mode": is_hosp}}
+            )
+        
+    # Convert MongoDB _id for JSON serialization
+    if "_id" in config:
+        config["_id"] = str(config["_id"])
+        
+    # Standardize/ensure cameras key is always a list
+    if "cameras" not in config or config["cameras"] is None:
+        config["cameras"] = []
+        
+    logger.info("Successfully retrieved/created edge config for store %s", store_id)
+    return config
+
