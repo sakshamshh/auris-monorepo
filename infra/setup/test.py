@@ -347,6 +347,33 @@ def test_aggregator_syntax():
     duration = (time.perf_counter() - start_time) * 1000
     return "PASS", duration, ""
 
+def test_edge_download(client):
+    try:
+        start_time = time.perf_counter()
+        
+        # 1. Get the API key for the test store
+        headers = {"X-Admin-Key": ADMIN_KEY}
+        r = client.get(f"/api/admin/stores/{TEST_STORE_ID}", headers=headers)
+        if r.status_code == 200:
+            api_key = r.json().get("api_key", os.getenv("TEST_API_KEY", "test"))
+        else:
+            api_key = os.getenv("TEST_API_KEY", "test")
+            
+        # 2. Test the edge worker download endpoint with the real API key
+        r2 = client.get("/api/edge/download/edge_worker", headers={"X-API-Key": api_key})
+        duration = (time.perf_counter() - start_time) * 1000
+        
+        if r2.status_code == 401:
+            return "FAIL", duration, "Auth failed"
+        elif r2.is_error:
+            return "FAIL", duration, f"HTTP status {r2.status_code}"
+            
+        return "PASS", duration, ""
+    except httpx.ConnectError:
+        return "FAIL", 0, "Server unreachable"
+    except Exception as e:
+        return "FAIL", 0, str(e)
+
 def main():
     print(f"\n🚀 {Fore.CYAN}Starting Auris API Routes Verification...{Style.RESET_ALL}")
     print(f"🔗 {Fore.WHITE}API Base Url: {API_BASE}{Style.RESET_ALL}\n")
@@ -364,10 +391,7 @@ def main():
         (9, "WhatsApp logs route", lambda c: test_whatsapp_logs(c)),
         (10, "PDF report route", lambda c: test_pdf_report(c)),
         (11, "Aggregator syntax check", lambda c: test_aggregator_syntax()),
-        (12, "Edge download endpoint", lambda c: test_factory_get_route(
-            c, "/api/edge/download/edge_worker",
-            headers={"X-API-Key": os.getenv("TEST_API_KEY", "test")}
-        )),
+        (12, "Edge download endpoint", lambda c: test_edge_download(c)),
         (13, "Live snapshot endpoint", lambda c: test_factory_get_route(
             c, f"/api/live/snapshot?store_id={TEST_STORE_ID}&camera_id=cam1",
             headers={"X-Admin-Key": ADMIN_KEY}
