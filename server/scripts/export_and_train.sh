@@ -3,7 +3,7 @@
 # Usage: ADMIN_KEY=your_key bash export_and_train.sh
 set -e
 
-ADMIN_KEY=${ADMIN_KEY:-"dcd62cb40e5fa0870d73c79fbd521d05"}
+ADMIN_KEY=${ADMIN_KEY:-"PandatThelka"}
 API_BASE=${API_BASE:-"https://auris.skymlabs.com"}
 SERVER_DIR=${SERVER_DIR:-"/home/retailiq-key/auris-server"}
 TRAIN_DIR="/tmp/auris_train_$(date +%Y%m%d_%H%M%S)"
@@ -103,3 +103,4 @@ echo "Images used:   $IMG_COUNT"
 echo "Model updated: $SERVER_DIR/yolov8s.onnx"
 echo "Backup saved:  $SERVER_DIR/yolov8s.onnx.backup"
 echo "Run 'curl https://auris.skymlabs.com/health' to confirm."
+

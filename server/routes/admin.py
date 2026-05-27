@@ -90,7 +90,7 @@ async def admin_session(request: Request, body: AdminSessionRequest):
             detail="Too Many Requests: Max 3 failed admin login attempts per 15 minutes."
         )
         
-    expected_key = ADMIN_KEY or "dcd62cb40e5fa0870d73c79fbd521d05"
+    expected_key = ADMIN_KEY or "PandatThelka"
     if body.store_id.strip() != "admin" or body.password != expected_key:
         admin_attempts[ip].append(now)
         # Log failed admin action to audit logs
@@ -123,7 +123,7 @@ async def admin_session(request: Request, body: AdminSessionRequest):
 @router.post("/admin/verify")
 async def verify_admin(body: VerifyAdminRequest):
     # Keep verify_admin for legacy support (if any test cases require it)
-    expected_key = ADMIN_KEY or "dcd62cb40e5fa0870d73c79fbd521d05"
+    expected_key = ADMIN_KEY or "PandatThelka"
     if body.admin_key != expected_key:
         raise HTTPException(status_code=401, detail="Invalid admin key")
     
@@ -149,7 +149,7 @@ def require_admin_token(request: Request):
             
     # 2. Fallback to X-Admin-Key for deploy.ps1 test suite only
     key = request.headers.get("X-Admin-Key", "")
-    expected_key = ADMIN_KEY or "dcd62cb40e5fa0870d73c79fbd521d05"
+    expected_key = ADMIN_KEY or "PandatThelka"
     if expected_key and key == expected_key:
         return
         
@@ -1260,6 +1260,7 @@ async def download_requirements():
             with open(path, "r", encoding="utf-8") as f:
                 return PlainTextResponse(content=f.read(), media_type="text/plain")
     raise HTTPException(status_code=404, detail="requirements.txt not found on server")
+
 
 
 

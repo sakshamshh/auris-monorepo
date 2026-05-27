@@ -57,7 +57,7 @@ def _calculate_shift_duration_hours(shift: Dict[str, Any]) -> float:
 def require_admin_key(request: Request):
     """Verifies standard Admin API Key header and returns 401 on failure."""
     key = request.headers.get("X-Admin-Key", "")
-    if key != "dcd62cb40e5fa0870d73c79fbd521d05":
+    if key != "PandatThelka":
         logger.warning("Admin authorization failed: invalid X-Admin-Key")
         raise HTTPException(status_code=401, detail="Unauthorized")
 
@@ -221,7 +221,7 @@ async def update_factory_cameras(request: Request, body: CamerasUpdateRequest):
     Requires admin key.
     """
     admin_key = request.headers.get("X-Admin-Key", "")
-    if admin_key != "dcd62cb40e5fa0870d73c79fbd521d05":
+    if admin_key != "PandatThelka":
         logger.warning("Admin authorization failed for camera update")
         raise HTTPException(status_code=401, detail="Unauthorized")
         
@@ -334,7 +334,7 @@ async def get_zones(request: Request, store_id: str):
     Get all zone configurations for a store.
     """
     admin_key = request.headers.get("X-Admin-Key", "")
-    if admin_key != "dcd62cb40e5fa0870d73c79fbd521d05":
+    if admin_key != "PandatThelka":
         header_store_id = request.headers.get("X-Store-ID", "").strip()
         password = request.headers.get("X-Password", "")
         
@@ -428,3 +428,4 @@ async def patch_factory_config(request: Request, body: PatchConfigRequest):
         
     logger.info("Successfully patched factory config status to '%s' for store %s", body.status, body.store_id)
     return {"success": True, "status": body.status}
+

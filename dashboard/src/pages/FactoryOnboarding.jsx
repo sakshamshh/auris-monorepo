@@ -22,6 +22,7 @@ const defaultForm = {
   floorPlan: null,
   floorPlanName: "",
   whatsAppNumber: "",
+  adminPassword: "",
 };
 
 const STEP_NAMES = [
@@ -29,7 +30,7 @@ const STEP_NAMES = [
   "Shift Schedule",
   "Workforce & Wages",
   "Floor Plan Upload",
-  "WhatsApp & Submit",
+  "Review & Submit",
 ];
 
 export default function FactoryOnboarding({ storeId, onSubmit }) {
@@ -109,6 +110,7 @@ export default function FactoryOnboarding({ storeId, onSubmit }) {
     }
     if (step === 5) {
       if (!formData.whatsAppNumber.trim()) return "WhatsApp number is required.";
+      if (!formData.adminPassword.trim()) return "Admin password is required.";
     }
     return "";
   };
@@ -135,7 +137,7 @@ export default function FactoryOnboarding({ storeId, onSubmit }) {
       const res = await fetch(`${API_BASE}/api/factory/onboard`, {
         method: "POST",
         headers: {
-          "X-Admin-Key": "dcd62cb40e5fa0870d73c79fbd521d05",
+          "X-Admin-Key": formData.adminPassword.trim(),
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
@@ -323,6 +325,11 @@ export default function FactoryOnboarding({ storeId, onSubmit }) {
                 <label className="block text-sm font-medium text-[#374151] mb-1">WhatsApp Number</label>
                 <input name="whatsAppNumber" type="text" value={formData.whatsAppNumber} onChange={handleInputChange}
                   placeholder="+91 98765 43210" className={inputCls} />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-[#374151] mb-1">Admin Password</label>
+                <input name="adminPassword" type="password" value={formData.adminPassword} onChange={handleInputChange}
+                  placeholder="Required for onboarding" className={inputCls} required />
               </div>
               <div className="pt-2 space-y-3">
                 <button type="submit" disabled={isSubmitting} className={`w-full ${btnPrimary}`}>

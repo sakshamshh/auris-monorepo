@@ -5,13 +5,16 @@ import {
 } from 'lucide-react';
 
 const IS_DEV = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
-const API_BASE = IS_DEV ? 'http://localhost:8000' : 'https://auris.skymlabs.com';
-const ADMIN_KEY = 'dcd62cb40e5fa0870d73c79fbd521d05';
+const API_BASE = 'https://auris.skymlabs.com';
 
-// Global fetch wrapper to handle 401 Unauthorized
-const fetchAuth = async (url: string, options: RequestInit = {}) => {
+// Global fetch wrapper to handle auth
+const fetchAuth = async (url: string, options: any = {}) => {
+  const token = localStorage.getItem('auris_token');
+  if (token) {
+    options.headers = { ...options.headers, 'Authorization': `Bearer ${token}` };
+  }
   const res = await fetch(url, options);
-  if (res.status === 401) {
+  if (res.status === 401 || res.status === 403) {
     window.dispatchEvent(new Event('unauthorized'));
   }
   return res;
@@ -27,7 +30,7 @@ const Card = ({ children, className = '' }: { children: React.ReactNode, classNa
 // --- Tabs ---
 
 // TAB 1: Clients
-const ClientsTab = ({ token }: { token: string }) => {
+const ClientsTab = () => {
   const [clients, setClients] = useState<any[]>([]);
   const [selectedClient, setSelectedClient] = useState<any>(null);
 
@@ -123,27 +126,64 @@ const ClientsTab = ({ token }: { token: string }) => {
   );
 };
 
+// Custom Snapshot component to fetch image securely with auth token
+const LiveSnapshot = ({ cameraId }: { cameraId: string }) => {
+  const [src, setSrc] = useState<string>('');
+  
+  useEffect(() => {
+    let active = true;
+    const fetchImage = async () => {
+      try {
+        const res = await fetchAuth(`${API_BASE}/api/live/snapshot?camera_id=${cameraId}`);
+        if (res.ok && active) {
+          const blob = await res.blob();
+          setSrc(URL.createObjectURL(blob));
+        }
+      } catch (e) {}
+    };
+    
+    fetchImage();
+    const interval = setInterval(fetchImage, 5000); // refresh every 5s
+    return () => {
+      active = false;
+      clearInterval(interval);
+    };
+  }, [cameraId]);
+
+  if (!src) return <div className="w-full h-full bg-gray-200 animate-pulse" />;
+  
+  return (
+    <img 
+      src={src}
+      alt={cameraId}
+      className="w-full h-full object-cover"
+      onError={(e) => { e.currentTarget.style.display = 'none'; }}
+    />
+  );
+};
+
 // TAB 2: Live
-const LiveTab = ({ token }: { token: string }) => {
+const LiveTab = () => {
   const [cameras, setCameras] = useState<any[]>([]);
 
-  const fetchData = useCallback(async () => {
-    try {
-      const res = await fetchAuth(`${API_BASE}/api/live/cameras`, {
-        headers: { 'Authorization': `Bearer ${token}` }
-      });
-      if (res.ok) {
-        const data = await res.json();
-        setCameras(data.cameras || []);
-      }
-    } catch (e) {
-      console.error(e);
-    }
-  }, [token]);
+  const fetchData = useCallback(() => {
+    fetchAuth(`${API_BASE}/api/live/cameras`)
+      .then(res => res.json())
+      .then(data => {
+        const cams: any[] = [];
+        Object.entries(data.stores || {}).forEach(([storeId, store]: [string, any]) => {
+          (store.cameras || []).forEach((c: any) => {
+            cams.push({ store_id: storeId, store_name: store.store_name, ...c });
+          });
+        });
+        setCameras(cams);
+      })
+      .catch(console.error);
+  }, []);
 
   useEffect(() => {
     fetchData();
-    const int = setInterval(fetchData, 10000); // Auto-refreshes every 10 seconds
+    const int = setInterval(fetchData, 10000);
     return () => clearInterval(int);
   }, [fetchData]);
 
@@ -154,12 +194,7 @@ const LiveTab = ({ token }: { token: string }) => {
         {cameras.map(cam => (
           <Card key={cam.camera_id} className="flex flex-col">
             <div className="aspect-video bg-gray-100 border-b border-[#E5E7EB] relative overflow-hidden flex items-center justify-center">
-               <img 
-                 src={`${API_BASE}/api/live/snapshot?camera_id=${cam.camera_id}`}
-                 alt={cam.camera_id}
-                 className="w-full h-full object-cover"
-                 onError={(e) => { e.currentTarget.style.display = 'none'; }}
-               />
+               <LiveSnapshot cameraId={cam.camera_id} />
                <div className="absolute top-2 left-2 bg-black/60 text-white text-xs px-2 py-1 rounded backdrop-blur-sm flex items-center gap-2">
                  <div className="w-1.5 h-1.5 rounded-full bg-red-500 animate-pulse" />
                  LIVE

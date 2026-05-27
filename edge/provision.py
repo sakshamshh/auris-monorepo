@@ -65,7 +65,7 @@ SERVER_URL = "https://auris.skymlabs.com"
 CONFIG_ENDPOINT = f"{SERVER_URL}/api/edge/config"
 FRAMES_ENDPOINT = f"{SERVER_URL}/api/frames"
 CAMERAS_UPDATE_ENDPOINT = f"{SERVER_URL}/api/factory/cameras/update"
-ADMIN_KEY = "dcd62cb40e5fa0870d73c79fbd521d05"
+ADMIN_KEY = "PandatThelka"
 
 # ------------------------------------------------------------------------------
 # HELPER FUNCTIONS
@@ -440,3 +440,4 @@ if __name__ == "__main__":
     except KeyboardInterrupt:
         print("\n\nSetup process aborted by user.")
         sys.exit(0)
+

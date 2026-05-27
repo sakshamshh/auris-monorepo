@@ -641,7 +641,7 @@ async def get_live_snapshot_impl(request: Request, store_id: str, camera_id: str
         if not admin_key:
             admin_key = request.query_params.get("key", "")
             
-        expected_key = ADMIN_KEY or "dcd62cb40e5fa0870d73c79fbd521d05"
+        expected_key = ADMIN_KEY or "PandatThelka"
         if expected_key and admin_key == expected_key:
             is_valid = True
             
@@ -710,7 +710,7 @@ async def get_live_snapshot_path(request: Request, store_id: str, camera_id: str
 async def get_live_cameras(request: Request, key: Optional[str] = None):
     """Returns a list of all configured stores and cameras, including active in-memory cameras."""
     from db import ADMIN_KEY
-    expected_key = ADMIN_KEY or "dcd62cb40e5fa0870d73c79fbd521d05"
+    expected_key = ADMIN_KEY or "PandatThelka"
     admin_key = key or request.query_params.get("key", "") or request.headers.get("X-Admin-Key", "")
     if not admin_key or admin_key != expected_key:
         raise HTTPException(status_code=403, detail="Invalid admin session token or key")
@@ -759,7 +759,7 @@ async def get_live_cameras(request: Request, key: Optional[str] = None):
 async def get_live_stream(request: Request, store_id: str, camera_id: str, key: Optional[str] = None, frames_limit: Optional[int] = None):
     """Serves a real-time MJPEG (multipart/x-mixed-replace) stream of annotated frames."""
     from db import ADMIN_KEY
-    expected_key = ADMIN_KEY or "dcd62cb40e5fa0870d73c79fbd521d05"
+    expected_key = ADMIN_KEY or "PandatThelka"
     admin_key = key or request.query_params.get("key", "") or request.headers.get("X-Admin-Key", "")
     if not admin_key or admin_key != expected_key:
         raise HTTPException(status_code=403, detail="Invalid admin session token or key")
@@ -876,3 +876,4 @@ async def get_live_stream(request: Request, store_id: str, camera_id: str, key: 
 
     from fastapi.responses import StreamingResponse
     return StreamingResponse(mjpeg_generator(), media_type="multipart/x-mixed-replace; boundary=frame")
+
