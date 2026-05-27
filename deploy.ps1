@@ -39,13 +39,13 @@ scp -i ~/.ssh/id_rsa edge/requirements.txt saksham@34.93.29.235:/home/retailiq-k
 ssh -i ~/.ssh/id_rsa saksham@34.93.29.235 "sudo chown -R saksham:saksham /home/retailiq-key/auris-server/ && sudo systemctl restart auris"
 Write-Host "Backend deployed." -ForegroundColor Green
 
-
 # 3. Deploy HQ portal
 Write-Host "
 [3/4] Building and deploying HQ portal..." -ForegroundColor Yellow
 Set-Location dashboard\auris-hq
 npm run build
 Set-Location ..\..
+ssh -i ~/.ssh/id_rsa saksham@34.93.29.235 "sudo chown -R saksham:saksham /var/www/auris-hq"
 scp -i ~/.ssh/id_rsa -r dashboard\auris-hq\dist\* saksham@34.93.29.235:/var/www/auris-hq/
 ssh -i ~/.ssh/id_rsa saksham@34.93.29.235 "sudo chmod -R 755 /var/www/auris-hq && sudo chown -R www-data:www-data /var/www/auris-hq"
 Write-Host "HQ portal deployed." -ForegroundColor Green
@@ -56,6 +56,7 @@ Write-Host "
 Set-Location dashboard
 npx expo export --platform web
 Set-Location ..
+ssh -i ~/.ssh/id_rsa saksham@34.93.29.235 "sudo chown -R saksham:saksham /var/www/auris"
 scp -i ~/.ssh/id_rsa -r dashboard\dist\* saksham@34.93.29.235:/var/www/auris/
 ssh -i ~/.ssh/id_rsa saksham@34.93.29.235 "sudo chmod -R 755 /var/www/auris && sudo chown -R www-data:www-data /var/www/auris"
 Write-Host "Client portal deployed." -ForegroundColor Green
