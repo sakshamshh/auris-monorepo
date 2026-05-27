@@ -35,10 +35,7 @@ const ClientsTab = () => {
   const [selectedClient, setSelectedClient] = useState<any>(null);
 
   useEffect(() => {
-    // Data from: GET /api/admin/stores (X-Admin-Key header)
-    fetchAuth(`${API_BASE}/admin/stores`, {
-      headers: { 'X-Admin-Key': ADMIN_KEY }
-    })
+    fetchAuth(`${API_BASE}/api/admin/stores`)
     .then(res => res.json())
     .then(data => setClients(data.stores || []))
     .catch(console.error);
@@ -416,6 +413,7 @@ const LoginScreen = ({ onLogin }: { onLogin: (t: string) => void }) => {
       });
       if (!res.ok) throw new Error('Invalid credentials');
       const data = await res.json();
+      localStorage.setItem('auris_token', data.token);
       onLogin(data.token);
     } catch (err: any) {
       setError(err.message);
@@ -473,10 +471,21 @@ export default function App() {
   const [activeTab, setActiveTab] = useState('clients');
 
   useEffect(() => {
-    const handler = () => setToken(null);
+    const stored = localStorage.getItem('auris_token');
+    if (stored) setToken(stored);
+    
+    const handler = () => {
+      localStorage.removeItem('auris_token');
+      setToken(null);
+    };
     window.addEventListener('unauthorized', handler);
     return () => window.removeEventListener('unauthorized', handler);
   }, []);
+
+  const handleLogout = () => {
+    localStorage.removeItem('auris_token');
+    setToken(null);
+  };
 
   if (!token) {
     return <LoginScreen onLogin={setToken} />;
@@ -520,7 +529,7 @@ export default function App() {
         
         <div className="p-4 border-t border-[#E5E7EB]">
           <button 
-            onClick={() => setToken(null)}
+            onClick={handleLogout}
             className="w-full flex items-center gap-3 px-3 py-2 text-sm font-medium text-gray-600 hover:bg-gray-50 rounded-lg transition-colors"
           >
             <LogOut size={18} className="text-gray-400" />
