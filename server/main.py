@@ -122,6 +122,7 @@ app.include_router(report_pdf_router)
 
 
 @app.get("/health")
+@app.get("/api/health")
 async def health():
     return {"status": "ok", "service": "auris-server", "phase": 2, "db_timeout_count": frames.db_timeout_count}
 

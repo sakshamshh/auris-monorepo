@@ -146,7 +146,7 @@ async def get_edge_heartbeats(request: Request):
     devices = []
     # Fetch all devices seen in last 24h
     one_day_ago = (datetime.now(timezone.utc) - timedelta(days=1)).isoformat()
-    cursor = db.edge_heartbeats.find({"last_seen": {"$gte": one_day_ago}}).sort("last_seen", -1)
+    cursor = db.edge_heartbeats.find({"last_seen": {"$gte": one_day_ago}})
     async for doc in cursor:
         doc.pop("_id", None)
         # Calculate active status (offline if not seen in 5 mins)
@@ -158,6 +158,7 @@ async def get_edge_heartbeats(request: Request):
         doc["last_heartbeat"] = doc["last_seen"]
         devices.append(doc)
         
+    devices.sort(key=lambda x: x["last_seen"], reverse=True)
     return {"devices": devices}
 
 

@@ -124,14 +124,14 @@ const ClientsTab = () => {
 };
 
 // Custom Snapshot component to fetch image securely with auth token
-const LiveSnapshot = ({ cameraId }: { cameraId: string }) => {
+const LiveSnapshot = ({ storeId, cameraId }: { storeId: string, cameraId: string }) => {
   const [src, setSrc] = useState<string>('');
   
   useEffect(() => {
     let active = true;
     const fetchImage = async () => {
       try {
-        const res = await fetchAuth(`${API_BASE}/api/live/snapshot?camera_id=${cameraId}`);
+        const res = await fetchAuth(`${API_BASE}/api/live/snapshot?store_id=${storeId}&camera_id=${cameraId}`);
         if (res.ok && active) {
           const blob = await res.blob();
           setSrc(URL.createObjectURL(blob));
@@ -145,7 +145,7 @@ const LiveSnapshot = ({ cameraId }: { cameraId: string }) => {
       active = false;
       clearInterval(interval);
     };
-  }, [cameraId]);
+  }, [storeId, cameraId]);
 
   if (!src) return <div className="w-full h-full bg-gray-200 animate-pulse" />;
   
@@ -189,9 +189,9 @@ const LiveTab = () => {
       <h2 className="text-lg font-semibold text-[#111827] mb-4">Live Cameras</h2>
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 overflow-y-auto pb-8">
         {cameras.map(cam => (
-          <Card key={cam.camera_id} className="flex flex-col">
+          <Card key={`${cam.store_id}-${cam.camera_id}`} className="flex flex-col">
             <div className="aspect-video bg-gray-100 border-b border-[#E5E7EB] relative overflow-hidden flex items-center justify-center">
-               <LiveSnapshot cameraId={cam.camera_id} />
+               <LiveSnapshot storeId={cam.store_id} cameraId={cam.camera_id} />
                <div className="absolute top-2 left-2 bg-black/60 text-white text-xs px-2 py-1 rounded backdrop-blur-sm flex items-center gap-2">
                  <div className="w-1.5 h-1.5 rounded-full bg-red-500 animate-pulse" />
                  LIVE
@@ -315,7 +315,7 @@ const SystemTab = ({ token }: { token: string }) => {
   const [devices, setDevices] = useState<any[]>([]);
 
   useEffect(() => {
-    fetchAuth(`${API_BASE}/health`)
+    fetchAuth(`${API_BASE}/api/health`)
       .then(res => res.json())
       .then(data => setHealth(data))
       .catch(console.error);
