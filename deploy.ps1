@@ -27,13 +27,13 @@ scp -i ~/.ssh/id_rsa server/routes/*.py saksham@34.93.29.235:/home/retailiq-key/
 scp -i ~/.ssh/id_rsa server/aggregator/*.py saksham@34.93.29.235:/home/retailiq-key/auris-server/aggregator/
 scp -i ~/.ssh/id_rsa server/main.py saksham@34.93.29.235:/home/retailiq-key/auris-server/
 scp -i ~/.ssh/id_rsa server/db.py saksham@34.93.29.235:/home/retailiq-key/auris-server/
-scp -i ~/.ssh/id_rsa server/yolov8s.onnx saksham@34.93.29.235:/home/retailiq-key/auris-server/
+# yolov8s.onnx lives on the server (generated once via `yolo export`), not deployed from local
 # Copy edge deployment/worker scripts needed by the edge download endpoints
 ssh -i ~/.ssh/id_rsa saksham@34.93.29.235 "mkdir -p /home/retailiq-key/auris-server/edge/src"
 scp -i ~/.ssh/id_rsa edge/src/edge_worker.py saksham@34.93.29.235:/home/retailiq-key/auris-server/edge/src/edge_worker.py
 scp -i ~/.ssh/id_rsa edge/provision.py saksham@34.93.29.235:/home/retailiq-key/auris-server/edge/provision.py
 scp -i ~/.ssh/id_rsa edge/requirements.txt saksham@34.93.29.235:/home/retailiq-key/auris-server/edge/requirements.txt
-ssh -i ~/.ssh/id_rsa saksham@34.93.29.235 "sudo chown -R retailiq-key:retailiq-key /home/retailiq-key/auris-server/ && sudo systemctl restart auris"
+ssh -i ~/.ssh/id_rsa saksham@34.93.29.235 "sudo chown -R saksham:saksham /home/retailiq-key/auris-server/ && sudo systemctl restart auris"
 Write-Host "Backend deployed." -ForegroundColor Green
 
 
