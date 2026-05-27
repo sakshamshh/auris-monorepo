@@ -3,7 +3,6 @@ import { View, Text, TouchableOpacity, StyleSheet, ActivityIndicator, SafeAreaVi
 import { getSavedCredentials, logout, fetchLive, fetchFactoryCameras } from "./src/services/api";
 
 import LoginScreen from "./src/screens/LoginScreen";
-import CalibrationScreen from "./src/screens/CalibrationScreen";
 import AdminScreen from "./src/screens/AdminScreen";
 
 // New Factory Screens
@@ -11,12 +10,6 @@ import FactoryMapScreen from "./src/screens/FactoryMapScreen";
 import FactoryDataScreen from "./src/screens/FactoryDataScreen";
 import FactoryReportScreen from "./src/screens/FactoryReportScreen";
 import FactoryAnalyticsScreen from "./src/screens/FactoryAnalyticsScreen";
-
-// New Retail Screens
-import RetailMapScreen from "./src/screens/RetailMapScreen";
-import FootfallScreen from "./src/screens/FootfallScreen";
-import RetailReportScreen from "./src/screens/RetailReportScreen";
-import HistoryScreen from "./src/screens/HistoryScreen";
 
 export default function App() {
   const [store, setStore]       = useState(null);
@@ -37,17 +30,8 @@ export default function App() {
     if (store) {
       (async () => {
         try {
-          if (store.plan === "factory") {
-            const res = await fetchFactoryCameras(store.store_id, store.password);
-            setCameraCount(res.total_online);
-          } else {
-            const res = await fetchLive(store.store_id, store.password);
-            if (res && res.cameras) {
-              setCameraCount(res.cameras.length);
-            } else {
-              setCameraCount(0);
-            }
-          }
+          const res = await fetchFactoryCameras(store.store_id, store.password);
+          setCameraCount(res.total_online);
         } catch (e) {
           console.log("Fetch camera count error:", e.message);
           setCameraCount(0);
@@ -83,24 +67,12 @@ export default function App() {
     return <LoginScreen onLogin={handleLogin} onAdmin={() => setShowAdmin(true)} />;
   }
 
-  const plan = store.plan || "retail";
-
   const renderScreen = () => {
-    if (plan === "factory") {
-      switch (tab) {
-        case "data": return <FactoryDataScreen store={store} />;
-        case "report": return <FactoryReportScreen store={store} />;
-        case "analytics": return <FactoryAnalyticsScreen store={store} />;
-        default: return <FactoryMapScreen store={store} setCameraCount={setCameraCount} />;
-      }
-    } else {
-      switch (tab) {
-        case "footfall": return <FootfallScreen store={store} />;
-        case "report": return <RetailReportScreen store={store} />;
-        case "history": return <HistoryScreen store={store} />;
-        case "calibrate": return <CalibrationScreen store={store} />;
-        default: return <RetailMapScreen store={store} />;
-      }
+    switch (tab) {
+      case "data": return <FactoryDataScreen store={store} />;
+      case "report": return <FactoryReportScreen store={store} />;
+      case "analytics": return <FactoryAnalyticsScreen store={store} />;
+      default: return <FactoryMapScreen store={store} setCameraCount={setCameraCount} />;
     }
   };
 
@@ -125,14 +97,14 @@ export default function App() {
       </View>
 
       {/* Trial Progress Bar */}
-      {store.plan === "factory" && trialActive && (
+      {trialActive && (
         <View style={styles.trialBar}>
           <View style={styles.trialHeader}>
             <Text style={styles.trialText}>Trial Day {trialDay} of 30 · Active</Text>
             <Text style={styles.trialPercentage}>{Math.round((daysSinceCreation / 30) * 100)}%</Text>
           </View>
           <View style={styles.progressBarContainer}>
-            <View style={[styles.progressBar, { width: `${Math.min(100, (daysSinceCreation / 30) * 100)}%` }]} />
+            <View style={[styles.progressBar, { width: `${Math.min(100, (daysCreation := daysSinceCreation) / 30 * 100)}%` }]} />
           </View>
         </View>
       )}
@@ -142,22 +114,10 @@ export default function App() {
 
       {/* Dynamic Tab Bar */}
       <View style={styles.tabBar}>
-        {plan === "factory" ? (
-          <>
-            <TabBtn id="map" label="Map" icon="🗺" tab={tab} setTab={setTab} />
-            <TabBtn id="data" label="Data" icon="📊" tab={tab} setTab={setTab} />
-            <TabBtn id="report" label="Report" icon="✦" tab={tab} setTab={setTab} />
-            <TabBtn id="analytics" label="Analytics" icon="📈" tab={tab} setTab={setTab} />
-          </>
-        ) : (
-          <>
-            <TabBtn id="map" label="Map" icon="🗺" tab={tab} setTab={setTab} />
-            <TabBtn id="footfall" label="Footfall" icon="👥" tab={tab} setTab={setTab} />
-            <TabBtn id="report" label="Report" icon="✦" tab={tab} setTab={setTab} />
-            <TabBtn id="history" label="History" icon="📅" tab={tab} setTab={setTab} />
-            <TabBtn id="calibrate" label="Calibrate" icon="⊕" tab={tab} setTab={setTab} />
-          </>
-        )}
+        <TabBtn id="map" label="Map" icon="🗺" tab={tab} setTab={setTab} />
+        <TabBtn id="data" label="Data" icon="📊" tab={tab} setTab={setTab} />
+        <TabBtn id="report" label="Report" icon="✦" tab={tab} setTab={setTab} />
+        <TabBtn id="analytics" label="Analytics" icon="📈" tab={tab} setTab={setTab} />
       </View>
     </SafeAreaView>
   );
