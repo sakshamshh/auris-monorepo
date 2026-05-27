@@ -374,10 +374,10 @@ const LoginScreen = ({ onLogin }: { onLogin: (t: string) => void }) => {
     setLoading(true);
     setError('');
     try {
-      const res = await fetch(`${API_BASE}/api/admin/session`, {
+      const res = await fetchAuth(`${API_BASE}/api/admin/session`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ store_id: 'admin', password })
+        body: JSON.stringify({ store_id: 'admin', password: password.trim() })
       });
       if (!res.ok) throw new Error('Invalid credentials');
       const data = await res.json();
@@ -396,22 +396,25 @@ const LoginScreen = ({ onLogin }: { onLogin: (t: string) => void }) => {
         <h1 className="text-xl font-semibold text-[#111827] mb-6">Sign in to AURIS</h1>
         <form onSubmit={handleSubmit} className="space-y-4">
           <div>
-            <label className="block text-sm font-medium text-[#111827] mb-1.5">Store ID</label>
+            <label htmlFor="store_id" className="block text-sm font-medium text-[#111827] mb-1.5">Store ID</label>
             <input 
+              id="store_id"
+              name="store_id"
               type="text" 
               value="admin" 
-              disabled 
+              readOnly 
               className="w-full bg-gray-50 border border-[#E5E7EB] rounded-lg px-3 py-2 text-sm text-gray-500 focus:outline-none" 
             />
           </div>
           <div>
-            <label className="block text-sm font-medium text-[#111827] mb-1.5">Password</label>
+            <label htmlFor="password" className="block text-sm font-medium text-[#111827] mb-1.5">Password</label>
             <input 
+              id="password"
+              name="password"
               type="password" 
               value={password} 
               onChange={e => setPassword(e.target.value)} 
               required 
-              autoFocus 
               className="w-full bg-white border border-[#E5E7EB] rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-[#2563EB] focus:ring-1 focus:ring-[#2563EB] transition-all" 
             />
           </div>
