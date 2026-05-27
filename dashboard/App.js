@@ -104,7 +104,7 @@ export default function App() {
             <Text style={styles.trialPercentage}>{Math.round((daysSinceCreation / 30) * 100)}%</Text>
           </View>
           <View style={styles.progressBarContainer}>
-            <View style={[styles.progressBar, { width: `${Math.min(100, (daysCreation := daysSinceCreation) / 30 * 100)}%` }]} />
+            <View style={[styles.progressBar, { width: `${Math.min(100, (daysSinceCreation / 30) * 100)}%` }]} />
           </View>
         </View>
       )}
