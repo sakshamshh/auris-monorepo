@@ -397,11 +397,13 @@ const OverviewPage = ({
 const ClientsPage = ({ 
   onSelectStore, 
   initialSelectedClient, 
-  clearInitialClient 
+  clearInitialClient,
+  token
 }: { 
   onSelectStore: (id: string) => void;
   initialSelectedClient?: string | null;
   clearInitialClient?: () => void;
+  token?: string;
 }) => {
   const [clients, setClients] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
@@ -1105,12 +1107,13 @@ const ClientsPage = ({
                         <div className="text-xs text-[#6B7280] italic">No cameras yet. Run provision.py on the edge device.</div>
                       ) : (
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                          {edgeCameras.map((cam: any) => (
+                           {edgeCameras.map((cam: any) => (
                             <LiveCameraView
                               key={cam.camera_id}
                               storeId={selectedClient || ''}
                               cameraId={cam.camera_id}
                               cameraLabel={cam.label || cam.camera_id}
+                              token={token}
                             />
                           ))}
                         </div>
@@ -1894,7 +1897,7 @@ const MappingPage = ({ storeId }: { storeId: string }) => {
 };
 
 // --- LIVE CAMERA VIEW COMPONENT ---
-const LiveCameraView = ({ storeId, cameraId, cameraLabel }: { storeId: string; cameraId: string; cameraLabel: string }) => {
+const LiveCameraView = ({ storeId, cameraId, cameraLabel, token }: { storeId: string; cameraId: string; cameraLabel: string; token?: string }) => {
   const [snapshot, setSnapshot] = useState<any>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -1904,9 +1907,14 @@ const LiveCameraView = ({ storeId, cameraId, cameraLabel }: { storeId: string; c
     const cleanCameraId = cameraId.toLowerCase().trim().replace(/\s+/g, '');
     console.log('Fetching snapshot for:', storeId, cameraId);
     try {
-      const res = await fetch(
-        `${API_BASE}/api/live/snapshot/${encodeURIComponent(cleanStoreId)}/${encodeURIComponent(cleanCameraId)}?key=${encodeURIComponent(ADMIN_KEY)}`
-      );
+      const headers: Record<string, string> = {};
+      let url = `${API_BASE}/api/live/snapshot/${encodeURIComponent(cleanStoreId)}/${encodeURIComponent(cleanCameraId)}`;
+      if (token) {
+        headers['Authorization'] = `Bearer ${token}`;
+      } else {
+        url += `?key=${encodeURIComponent(ADMIN_KEY)}`;
+      }
+      const res = await fetch(url, { headers });
       if (res.ok) {
         const data = await res.json();
         console.log('Response:', data);
@@ -1977,7 +1985,7 @@ const LiveCameraView = ({ storeId, cameraId, cameraLabel }: { storeId: string; c
 };
 
 // --- CALIBRATION TAB ---
-const CalibrationTab = ({ storeId, password }: { storeId: string; password?: string }) => {
+const CalibrationTab = ({ storeId, password, token }: { storeId: string; password?: string; token?: string }) => {
     const [points, setPoints] = useState<any[]>([]);
     const [imgUrl, setImgUrl] = useState<string | null>(null);
     const [cameraId, setCameraId] = useState('');
@@ -2025,8 +2033,14 @@ const CalibrationTab = ({ storeId, password }: { storeId: string; password?: str
             setImgUrl(data.full_frame_b64.startsWith('data:') ? data.full_frame_b64 : `data:image/jpeg;base64,${data.full_frame_b64}`);
           } else {
             // Try live snapshot as fallback
+            const liveHeaders: Record<string, string> = {};
+            if (token) {
+              liveHeaders['Authorization'] = `Bearer ${token}`;
+            } else {
+              liveHeaders['X-Admin-Key'] = ADMIN_KEY;
+            }
             const snapRes = await fetch(`${API_BASE}/api/live/snapshot?store_id=${storeId}&camera_id=${cameraId}`, {
-              headers: { 'X-Admin-Key': ADMIN_KEY }
+              headers: liveHeaders
             });
             if (snapRes.ok) {
               const snapData = await snapRes.json();
@@ -2042,8 +2056,14 @@ const CalibrationTab = ({ storeId, password }: { storeId: string; password?: str
         } else {
           // Try live snapshot as fallback when calibration snapshot fails
           try {
+            const liveHeaders: Record<string, string> = {};
+            if (token) {
+              liveHeaders['Authorization'] = `Bearer ${token}`;
+            } else {
+              liveHeaders['X-Admin-Key'] = ADMIN_KEY;
+            }
             const snapRes = await fetch(`${API_BASE}/api/live/snapshot?store_id=${storeId}&camera_id=${cameraId}`, {
-              headers: { 'X-Admin-Key': ADMIN_KEY }
+              headers: liveHeaders
             });
             if (snapRes.ok) {
               const snapData = await snapRes.json();
@@ -2903,7 +2923,7 @@ const AnalyticsPage = ({
 };
 
 // --- CORE LOGIN COMPONENT ---
-const Login = ({ onLogin }: { onLogin: (s: string, p: string, name: string) => void }) => {
+const Login = ({ onLogin }: { onLogin: (s: string, p: string, name: string, token: string) => void }) => {
   const [usr, setUsr] = useState('');
   const [pwd, setPwd] = useState('');
   const [error, setError] = useState('');
@@ -2932,7 +2952,24 @@ const Login = ({ onLogin }: { onLogin: (s: string, p: string, name: string) => v
         }
       }
       
-      onLogin(data.store_id, pwd, data.store_name);
+      let sessionToken = '';
+      if (usr.trim() === 'admin' || data.role === 'admin') {
+        try {
+          const sessionRes = await fetch(`${API_BASE}/api/admin/session`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ store_id: 'admin', password: pwd })
+          });
+          if (sessionRes.ok) {
+            const sessionData = await sessionRes.json();
+            sessionToken = sessionData.token;
+          }
+        } catch (err) {
+          console.error("Failed to fetch admin session token", err);
+        }
+      }
+      
+      onLogin(data.store_id, pwd, data.store_name, sessionToken);
     } catch (e: any) {
       setError(e.message || "Failed to sign in");
     } finally {
@@ -3001,6 +3038,7 @@ export default function App() {
   const [storeId, setStoreId] = useState<string | null>(null);
   const [password, setPassword] = useState<string>('');
   const [storeName, setStoreName] = useState<string>('');
+  const [token, setToken] = useState<string>('');
   const [factoryConfigs, setFactoryConfigs] = useState<any[]>([]);
   const [selectedRegistryClient, setSelectedRegistryClient] = useState<string | null>(null);
 
@@ -3024,10 +3062,11 @@ export default function App() {
     setActiveTab('factory_analytics');
   };
 
-  const handleLoginSuccess = (id: string, pass: string, name: string) => {
+  const handleLoginSuccess = (id: string, pass: string, name: string, tok: string) => {
     setStoreId(id);
     setPassword(pass);
     setStoreName(name);
+    setToken(tok);
     setActiveTab('overview');
   };
 
@@ -3076,7 +3115,7 @@ export default function App() {
 
         {/* Logout bottom */}
         <button 
-          onClick={() => { setStoreId(null); setPassword(''); }}
+          onClick={() => { setStoreId(null); setPassword(''); setToken(''); }}
           className="mt-auto w-full text-left px-2.5 py-2 font-medium text-xs text-[#6B7280] hover:text-[#DC2626] flex items-center gap-2 rounded hover:bg-gray-50 transition-colors"
         >
           <LogOut className="w-4 h-4" />
@@ -3108,10 +3147,11 @@ export default function App() {
               onSelectStore={handleSelectStore} 
               initialSelectedClient={selectedRegistryClient} 
               clearInitialClient={() => setSelectedRegistryClient(null)} 
+              token={token}
             />
           )}
           {activeTab === 'mapping' && <MappingPage storeId={storeId || ''} />}
-          {activeTab === 'calibration' && <CalibrationTab storeId={storeId} password={password} />}
+          {activeTab === 'calibration' && <CalibrationTab storeId={storeId} password={password} token={token} />}
           {activeTab === 'report' && <ReportTab storeId={storeId} password={password} />}
           {activeTab === 'training' && <TrainingTab />}
           {activeTab === 'factory' && <FactoryOnboardingView storeId={storeId} />}

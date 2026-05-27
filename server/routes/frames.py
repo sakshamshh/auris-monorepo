@@ -16,6 +16,7 @@ import cv2
 import numpy as np
 from fastapi import APIRouter, Request, HTTPException, BackgroundTasks
 from pydantic import BaseModel
+from pymongo.errors import ServerSelectionTimeoutError
 
 from db import db, get_store_by_api_key
 from spatial.homography import norm_to_metres
@@ -40,6 +41,7 @@ FIRE_MODEL = None
 trackers: Dict[str, Any] = {}
 _homography_cache: Dict[str, dict] = {}
 REID_ENABLED = os.getenv("REID_ENABLED", "false").lower() == "true"
+db_timeout_count = 0
 
 # Live snapshot store: {store_id_camera_id: {frame_b64, timestamp, people_now}}
 latest_frames: Dict[str, dict] = {}
@@ -56,7 +58,7 @@ def get_tracker(store_id: str, camera_id: str):
 
 try:
     if YOLO:
-        MODEL = YOLO("yolov8n.onnx", task="detect")
+        MODEL = YOLO("yolov8s.onnx", task="detect")
         try:
             FIRE_MODEL = YOLO("fire.pt")
         except Exception:
@@ -151,8 +153,8 @@ def run_inference_and_tracking(payload: FramePayload) -> Tuple[List, List, bool,
             if full_img is not None:
                 fh, fw = full_img.shape[:2]
                 
-                # 1. Run YOLOv8 on full frame: conf=0.25, classes=[0] (person)
-                results = MODEL(full_img, conf=0.25, classes=[0], verbose=False)
+                # 1. Run YOLOv8 on full frame: conf=0.10, iou=0.45, classes=[0] (person)
+                results = MODEL(full_img, conf=0.10, iou=0.45, classes=[0], verbose=False)
                 
                 yolo_dets = []
                 for r in results:
@@ -187,7 +189,7 @@ def run_inference_and_tracking(payload: FramePayload) -> Tuple[List, List, bool,
                     deepsort_detections.append(([abs_x, abs_y, abs_w, abs_h], conf, "person"))
                     
                     # For training / hard cases / pseudo labels: save full frame crops not tiny motion blobs
-                    if (0.15 <= conf < 0.50) or conf > 0.85:
+                    if (0.10 <= conf < 0.40) or conf > 0.85:
                         crop_img = blurred_img[abs_y:abs_y+abs_h, abs_x:abs_x+abs_w]
                         if crop_img.size > 0:
                             _, crop_buf = cv2.imencode('.jpg', crop_img, [int(cv2.IMWRITE_JPEG_QUALITY), 75])
@@ -245,8 +247,8 @@ async def execute_frame_inference_and_tracking(payload: FramePayload, api_key: s
 
         for meta in crop_meta:
             conf = meta["max_conf"]
-            # Only save hard cases where YOLO found SOMETHING but was uncertain (0.15–0.50)
-            if 0.15 <= conf < 0.50:
+            # Only save hard cases where YOLO found SOMETHING but was uncertain (0.10–0.40)
+            if 0.10 <= conf < 0.40:
                 await save_hard_case(s_id, c_id, meta["jpeg_b64"], conf, payload.frame_id)
             elif conf > 0.85:
                 await save_pseudo_label(s_id, c_id, meta["jpeg_b64"], meta["bbox"], conf)
@@ -256,7 +258,7 @@ async def execute_frame_inference_and_tracking(payload: FramePayload, api_key: s
         if tracker and ds_detections:
             W_orig, H_orig = payload.frame_resolution
             dummy = np.zeros((H_orig, W_orig, 3), dtype=np.uint8)
-            for track in tracker.update_tracks(ds_detections, frame=dummy):
+            for track in tracker.update_tracks(ds_detections, frame=blurred_img if blurred_img is not None else dummy):
                 if not track.is_confirmed():
                     continue
                 ltrb = track.to_ltrb()
@@ -395,6 +397,24 @@ async def execute_frame_inference_and_tracking(payload: FramePayload, api_key: s
         if people_now > max_capacity:
             await dispatch_overcrowding_alert(s_id, people_now, max_capacity)
 
+        if people_now >= 5 and payload.frame_id % 30 == 0 and blurred_img is not None:
+            try:
+                _, tbuf = cv2.imencode('.jpg', blurred_img, [int(cv2.IMWRITE_JPEG_QUALITY), 80])
+                tb64 = base64.b64encode(tbuf).decode('utf-8')
+                await db._db.training_frames.insert_one({
+                    "store_id": s_id,
+                    "camera_id": c_id,
+                    "frame_id": payload.frame_id,
+                    "timestamp": payload.timestamp,
+                    "image_b64": tb64,
+                    "people_count": people_now,
+                    "detections": final_detections,
+                    "created_at": datetime.now(timezone.utc).isoformat()
+                })
+                logger.info(f"Saved training frame for {s_id}/{c_id} (people: {people_now})")
+            except Exception as e:
+                logger.warning(f"Failed to save training frame: {e}")
+
         # Store latest snapshot for live view
         s_id_low = s_id.lower()
         c_id_low = c_id.lower()
@@ -494,7 +514,12 @@ async def execute_frame_inference_and_tracking(payload: FramePayload, api_key: s
             "detections": final_detections,
             "floor_id": cam_floor,
         }
-        await db.blobs.insert_one(blob_doc)
+        try:
+            await db.blobs.insert_one(blob_doc)
+        except (asyncio.TimeoutError, ServerSelectionTimeoutError) as e:
+            logger.error(f"Database timeout inserting blob for store_id={s_id}, camera_id={c_id}, frame_id={payload.frame_id}: {e}")
+            global db_timeout_count
+            db_timeout_count += 1
         logger.info(f"Processed frame {payload.frame_id} for store {s_id} camera {c_id}. Occupancy: {people_now}")
     except Exception as e:
         logger.error(f"Error executing frame inference: {e}", exc_info=True)

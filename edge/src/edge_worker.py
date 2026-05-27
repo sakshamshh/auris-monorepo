@@ -278,7 +278,7 @@ class CameraWorker(threading.Thread):
         
         self.cap = None
         self.running = False
-        self.bg_subtractor = cv2.createBackgroundSubtractorMOG2(history=500, varThreshold=MOTION_THRESHOLD, detectShadows=False)
+        self.bg_subtractor = cv2.createBackgroundSubtractorMOG2(history=1000, varThreshold=25, detectShadows=False)
         self.frame_count = 0
         self.consecutive_failures = 0
 
@@ -379,6 +379,14 @@ class CameraWorker(threading.Thread):
                     logger.info(f"[{self.name}] Processed {self.frame_count} frames. Buffer size: {buf_size}")
 
                 H, W = frame.shape[:2]
+                if W > 1280:
+                    scale = 1280.0 / W
+                    new_w, new_h = 1280, int(H * scale)
+                    frame = cv2.resize(frame, (new_w, new_h))
+                    H, W = new_h, new_w
+                
+                # Frame denoising before MOG2
+                frame = cv2.bilateralFilter(frame, d=5, sigmaColor=35, sigmaSpace=35)
                 
                 # Apply Background Subtraction
                 mask = self.bg_subtractor.apply(frame)
@@ -391,8 +399,8 @@ class CameraWorker(threading.Thread):
                 has_motion = any(cv2.contourArea(c) >= MIN_CONTOUR_AREA for c in contours)
                 
                 if has_motion or calibration_mode:
-                    # Every frame: compress full frame to JPEG at 60% quality
-                    encode_param = [int(cv2.IMWRITE_JPEG_QUALITY), 60]
+                    # Every frame: compress full frame to JPEG at 80% quality
+                    encode_param = [int(cv2.IMWRITE_JPEG_QUALITY), 80]
                     success, ff_enc = cv2.imencode('.jpg', frame, encode_param)
                     if success:
                         full_frame_b64 = base64.b64encode(ff_enc).decode('utf-8')
@@ -408,8 +416,11 @@ class CameraWorker(threading.Thread):
                             "motion_pixels": int(motion_pixel_count),
                             "priority": self.calculate_priority(motion_pixel_count, calibration_mode)
                         }
-                        self.uploader.enqueue(payload)
-                        logger.info(f"[{camera_id}] Sent motion full-frame (frame_id: {self.frame_count}, pixels: {motion_pixel_count})")
+                        if self.uploader.server_pressure > 0.8 and not calibration_mode:
+                            logger.info(f"[{camera_id}] Dropping frame {self.frame_count} locally due to server pressure ({self.uploader.server_pressure:.2f})")
+                        else:
+                            self.uploader.enqueue(payload)
+                            logger.info(f"[{camera_id}] Sent motion full-frame (frame_id: {self.frame_count}, pixels: {motion_pixel_count})")
                 
                 # Control frame rate by sleeping remainder of the target delay
                 elapsed = time.time() - start_time

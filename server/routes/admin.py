@@ -11,7 +11,7 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import PlainTextResponse, HTMLResponse
 from pydantic import BaseModel
 
-from db import db, hash_password, generate_api_key, ADMIN_KEY
+from db import db, hash_password, generate_api_key, ADMIN_KEY, get_store_by_api_key
 
 router = APIRouter()
 
@@ -182,6 +182,57 @@ async def get_install_script():
                 continue
                 
     raise HTTPException(status_code=404, detail="Installation script not found on server")
+
+async def _verify_edge_download_auth(request: Request):
+    api_key = request.headers.get("X-API-Key")
+    if not api_key:
+        raise HTTPException(status_code=401, detail="API Key missing")
+    store = await get_store_by_api_key(api_key)
+    if not store:
+        raise HTTPException(status_code=401, detail="Invalid API Key")
+
+@router.get("/edge/download/edge_worker", response_class=PlainTextResponse)
+async def download_edge_worker(request: Request):
+    await _verify_edge_download_auth(request)
+    path = "/home/retailiq-key/auris-server/edge/src/edge_worker.py"
+    if not os.path.exists(path):
+        raise HTTPException(status_code=404, detail="File not found")
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            return f.read()
+    except Exception:
+        raise HTTPException(status_code=404, detail="File not found")
+
+@router.get("/edge/download/provision", response_class=PlainTextResponse)
+async def download_provision(request: Request):
+    await _verify_edge_download_auth(request)
+    path = "/home/retailiq-key/auris-server/edge/src/provision.py"
+    if not os.path.exists(path):
+        raise HTTPException(status_code=404, detail="File not found")
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            return f.read()
+    except Exception:
+        raise HTTPException(status_code=404, detail="File not found")
+
+@router.get("/edge/download/requirements", response_class=PlainTextResponse)
+async def download_requirements(request: Request):
+    await _verify_edge_download_auth(request)
+    path1 = "/home/retailiq-key/auris-server/edge/src/requirements.txt"
+    path2 = "/home/retailiq-key/auris-server/edge/requirements.txt"
+    
+    path = path1 if os.path.exists(path1) else path2
+    if not os.path.exists(path):
+        # Fallback to absolute path from prompt implied location
+        path = "/home/retailiq-key/auris-server/edge/src/requirements.txt"
+
+    if not os.path.exists(path):
+        raise HTTPException(status_code=404, detail="File not found")
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            return f.read()
+    except Exception:
+        raise HTTPException(status_code=404, detail="File not found")
 
 class UpdatePersonaRequest(BaseModel):
     instructions: str

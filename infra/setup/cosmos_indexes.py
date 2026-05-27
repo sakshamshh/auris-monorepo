@@ -104,6 +104,12 @@ COLLECTIONS_SPEC = {
             {"keys": [("store_id", pymongo.ASCENDING), ("sent_at", pymongo.ASCENDING), ("message_type", pymongo.ASCENDING)], "options": {}},
             {"keys": [("store_id", pymongo.ASCENDING), ("status", pymongo.ASCENDING)], "options": {}},
         ]
+    },
+    "training_frames": {
+        "indexes": [
+            {"keys": [("store_id", pymongo.ASCENDING), ("camera_id", pymongo.ASCENDING)], "options": {}},
+            {"keys": [("created_at", pymongo.DESCENDING)], "options": {}},
+        ]
     }
 }
 

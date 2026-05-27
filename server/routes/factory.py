@@ -472,6 +472,8 @@ async def get_edge_config(request: Request):
     if "cameras" not in config or config["cameras"] is None:
         config["cameras"] = []
         
-    logger.info("Successfully retrieved/created edge config for store %s", store_id)
+    num_cameras = len(config["cameras"])
+    ts = datetime.now(timezone.utc).isoformat()
+    logger.info("Successfully retrieved/created edge config for store_id: %s. Cameras count: %d. Timestamp: %s", store_id, num_cameras, ts)
     return config
 

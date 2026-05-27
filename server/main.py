@@ -138,7 +138,7 @@ app.include_router(retail_router)
 
 @app.get("/health")
 async def health():
-    return {"status": "ok", "service": "auris-server", "phase": 2}
+    return {"status": "ok", "service": "auris-server", "phase": 2, "db_timeout_count": frames.db_timeout_count}
 
 
 if __name__ == "__main__":
