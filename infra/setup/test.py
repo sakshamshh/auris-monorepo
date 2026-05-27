@@ -166,14 +166,15 @@ def test_factory_zones(client):
     except httpx.RequestError as e:
         return "FAIL", 0, f"Network error: {str(e)}"
 
-def test_factory_get_route(client, route, expect_keys=None):
+def test_factory_get_route(client, route, expect_keys=None, headers=None):
     try:
         start_time = time.perf_counter()
-        headers = {
+        req_headers = {
             "X-Store-ID": TEST_STORE_ID,
-            "X-Password": TEST_PASSWORD
+            "X-Password": TEST_PASSWORD,
+            **(headers or {})
         }
-        r = client.get(route, headers=headers)
+        r = client.get(route, headers=req_headers)
         duration = (time.perf_counter() - start_time) * 1000
         
         if r.status_code == 401:
@@ -364,7 +365,19 @@ def main():
         (10, "Retail history route", lambda c: test_retail_route(c, "/api/retail/footfall/history")),
         (11, "WhatsApp logs route", lambda c: test_whatsapp_logs(c)),
         (12, "PDF report route", lambda c: test_pdf_report(c)),
-        (13, "Aggregator syntax check", lambda c: test_aggregator_syntax())
+        (13, "Aggregator syntax check", lambda c: test_aggregator_syntax()),
+        (14, "Edge download endpoint", lambda c: test_factory_get_route(
+            c, "/api/edge/download/edge_worker",
+            headers={"X-API-Key": os.getenv("TEST_API_KEY", "test")}
+        )),
+        (15, "Live snapshot endpoint", lambda c: test_factory_get_route(
+            c, f"/api/live/snapshot?store_id={TEST_STORE_ID}&camera_id=cam1",
+            headers={"X-Admin-Key": ADMIN_KEY}
+        )),
+        (16, "Training stats endpoint", lambda c: test_factory_get_route(
+            c, "/api/training/stats",
+            headers={"X-Admin-Key": ADMIN_KEY}
+        ))
     ]
 
     passed = 0
@@ -375,7 +388,7 @@ def main():
     with httpx.Client(base_url=API_BASE, timeout=15.0) as client:
         for idx, label, test_fn in test_cases:
             # Print temporary running indicator
-            print(f"  ⌛ Running [{idx}/13]: {label}...", end="\r", flush=True)
+            print(f"  ⌛ Running [{idx}/16]: {label}...", end="\r", flush=True)
             
             try:
                 if idx == 13:

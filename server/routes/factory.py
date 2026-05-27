@@ -246,6 +246,35 @@ async def get_deadtime(
             logger.error("Failed to generate dead time narrative: %s", e)
             narrative = ""
 
+    # Fallback: if no zones configured yet, aggregate whole floor
+    if not by_zone:
+        fallback_cursor = raw_db.blobs.find({
+            "store_id": store_id,
+            "timestamp": {
+                "$gte": from_date_dt.isoformat(),
+                "$lte": to_date_dt.isoformat()
+            }
+        })
+        fallback_counts = []
+        async for doc in fallback_cursor:
+            val = (doc.get("people_now") or doc.get("person_count")
+                   or doc.get("count") or 0)
+            fallback_counts.append(float(val))
+        if fallback_counts:
+            avg_occ = sum(fallback_counts) / len(fallback_counts)
+            total_hrs = len(fallback_counts) / 60.0
+            by_zone = [{
+                "zone_id": "floor_0",
+                "zone_label": "Factory Floor",
+                "dead_hours": 0.0,
+                "dead_cost_inr": 0.0,
+                "productive_hours": round(total_hrs, 2),
+                "avg_occupancy": round(avg_occ, 1)
+            }]
+            productive_hours_total = total_hrs
+            dead_hours_total = 0.0
+            dead_cost_inr_total = 0.0
+
     return {
         "period": {
             "from": from_date_dt.isoformat(),

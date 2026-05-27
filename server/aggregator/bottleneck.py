@@ -318,7 +318,7 @@ async def main():
         now = datetime.now(timezone.utc)
         
         # Query active factories where status == "live"
-        factories_cursor = db.factory_config.find({"status": "live"})
+        factories_cursor = db.factory_config.find({"status": {"$in": ["live", "pending", "trial"]}})
         factories = []
         async for f in factories_cursor:
             factories.append(f)

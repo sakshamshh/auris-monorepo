@@ -78,7 +78,8 @@ async def aggregate_zone_hour(db, factory: dict, zone: dict, hour_start: datetim
     person_counts = []
     
     async for doc in blobs_cursor:
-        val = doc.get('person_count') or doc.get('count') or 0
+        val = (doc.get('people_now') or doc.get('person_count') 
+               or doc.get('count') or 0)
         person_counts.append(float(val))
             
     # 3. Perform calculations
@@ -215,7 +216,7 @@ async def main():
         logger.info("Aggregating for hour bucket: %s to %s", hour_start_iso, hour_end_iso)
         
         # Get all live factories
-        factories_cursor = db.factory_config.find({"status": "live"})
+        factories_cursor = db.factory_config.find({"status": {"$in": ["live", "pending", "trial"]}})
         factories = []
         async for f in factories_cursor:
             factories.append(f)

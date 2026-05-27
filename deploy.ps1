@@ -28,6 +28,9 @@ scp -i ~/.ssh/id_rsa server/aggregator/*.py saksham@34.93.29.235:/home/retailiq-
 scp -i ~/.ssh/id_rsa server/main.py saksham@34.93.29.235:/home/retailiq-key/auris-server/
 scp -i ~/.ssh/id_rsa server/db.py saksham@34.93.29.235:/home/retailiq-key/auris-server/
 # yolov8s.onnx lives on the server (generated once via `yolo export`), not deployed from local
+ssh -i ~/.ssh/id_rsa saksham@34.93.29.235 "mkdir -p /home/retailiq-key/auris-server/scripts"
+scp -i ~/.ssh/id_rsa server/scripts/export_and_train.sh saksham@34.93.29.235:/home/retailiq-key/auris-server/scripts/
+ssh -i ~/.ssh/id_rsa saksham@34.93.29.235 "chmod +x /home/retailiq-key/auris-server/scripts/export_and_train.sh"
 # Copy edge deployment/worker scripts needed by the edge download endpoints
 ssh -i ~/.ssh/id_rsa saksham@34.93.29.235 "mkdir -p /home/retailiq-key/auris-server/edge/src"
 scp -i ~/.ssh/id_rsa edge/src/edge_worker.py saksham@34.93.29.235:/home/retailiq-key/auris-server/edge/src/edge_worker.py
@@ -56,6 +59,17 @@ Set-Location ..
 scp -i ~/.ssh/id_rsa -r dashboard\dist\* saksham@34.93.29.235:/var/www/auris/
 ssh -i ~/.ssh/id_rsa saksham@34.93.29.235 "sudo chmod -R 755 /var/www/auris && sudo chown -R www-data:www-data /var/www/auris"
 Write-Host "Client portal deployed." -ForegroundColor Green
+
+# 5. Enable systemd timers on server (safe to re-run)
+Write-Host "`n[5/5] Enabling aggregator timers..." -ForegroundColor Yellow
+ssh -i ~/.ssh/id_rsa saksham@34.93.29.235 @"
+  sudo cp /home/retailiq-key/auris-server/infra/systemd/auris-*.timer /etc/systemd/system/ 2>/dev/null || true
+  sudo cp /home/retailiq-key/auris-server/infra/systemd/auris-*.service /etc/systemd/system/ 2>/dev/null || true
+  sudo systemctl daemon-reload
+  sudo systemctl enable --now auris-zone-hour.timer auris-bottleneck.timer auris-pattern.timer 2>/dev/null || true
+  sudo systemctl list-timers --all | grep auris
+"@
+Write-Host "Timers enabled." -ForegroundColor Green
 
 Write-Host "
 Done. Auris is live." -ForegroundColor Cyan
