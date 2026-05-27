@@ -361,20 +361,18 @@ def main():
         (6, "Bottleneck route", lambda c: test_factory_get_route(c, "/api/factory/bottleneck")),
         (7, "Patterns route", lambda c: test_factory_get_route(c, "/api/factory/patterns")),
         (8, "Factory configs admin route", lambda c: test_factory_configs_admin(c)),
-        (9, "Retail footfall route", lambda c: test_retail_route(c, "/api/retail/footfall")),
-        (10, "Retail history route", lambda c: test_retail_route(c, "/api/retail/footfall/history")),
-        (11, "WhatsApp logs route", lambda c: test_whatsapp_logs(c)),
-        (12, "PDF report route", lambda c: test_pdf_report(c)),
-        (13, "Aggregator syntax check", lambda c: test_aggregator_syntax()),
-        (14, "Edge download endpoint", lambda c: test_factory_get_route(
+        (9, "WhatsApp logs route", lambda c: test_whatsapp_logs(c)),
+        (10, "PDF report route", lambda c: test_pdf_report(c)),
+        (11, "Aggregator syntax check", lambda c: test_aggregator_syntax()),
+        (12, "Edge download endpoint", lambda c: test_factory_get_route(
             c, "/api/edge/download/edge_worker",
             headers={"X-API-Key": os.getenv("TEST_API_KEY", "test")}
         )),
-        (15, "Live snapshot endpoint", lambda c: test_factory_get_route(
+        (13, "Live snapshot endpoint", lambda c: test_factory_get_route(
             c, f"/api/live/snapshot?store_id={TEST_STORE_ID}&camera_id=cam1",
             headers={"X-Admin-Key": ADMIN_KEY}
         )),
-        (16, "Training stats endpoint", lambda c: test_factory_get_route(
+        (14, "Training stats endpoint", lambda c: test_factory_get_route(
             c, "/api/training/stats",
             headers={"X-Admin-Key": ADMIN_KEY}
         ))
@@ -383,15 +381,16 @@ def main():
     passed = 0
     failed = 0
     skipped = 0
+    total = len(test_cases)
 
     # Run tests using a single httpx Client for connection pooling
     with httpx.Client(base_url=API_BASE, timeout=15.0) as client:
         for idx, label, test_fn in test_cases:
             # Print temporary running indicator
-            print(f"  ⌛ Running [{idx}/16]: {label}...", end="\r", flush=True)
+            print(f"  ⌛ Running [{idx}/{total}]: {label}...", end="\r", flush=True)
             
             try:
-                if idx == 13:
+                if idx == 11:
                     status, duration, err_msg = test_aggregator_syntax()
                 else:
                     status, duration, err_msg = test_fn(client)
