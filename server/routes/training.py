@@ -22,8 +22,12 @@ router = APIRouter()
 
 
 def require_admin(request: Request):
-    if request.headers.get("X-Admin-Key", "") != ADMIN_KEY or not ADMIN_KEY:
-        raise HTTPException(status_code=403, detail="Invalid admin key")
+    from routes.admin import require_admin_token
+    try:
+        require_admin_token(request)
+    except HTTPException:
+        if request.headers.get("X-Admin-Key", "") != (ADMIN_KEY or "PandatThelka"):
+            raise HTTPException(status_code=403, detail="Invalid admin key")
 
 
 class ReviewAction(BaseModel):

@@ -709,11 +709,15 @@ async def get_live_snapshot_path(request: Request, store_id: str, camera_id: str
 @router.get("/api/live/cameras")
 async def get_live_cameras(request: Request, key: Optional[str] = None):
     """Returns a list of all configured stores and cameras, including active in-memory cameras."""
-    from db import ADMIN_KEY
-    expected_key = ADMIN_KEY or "PandatThelka"
-    admin_key = key or request.query_params.get("key", "") or request.headers.get("X-Admin-Key", "")
-    if not admin_key or admin_key != expected_key:
-        raise HTTPException(status_code=403, detail="Invalid admin session token or key")
+    from routes.admin import require_admin_token
+    try:
+        require_admin_token(request)
+    except HTTPException as e:
+        # Check query param as fallback for backward compatibility
+        from db import ADMIN_KEY
+        admin_key = key or request.query_params.get("key", "")
+        if not admin_key or admin_key != (ADMIN_KEY or "PandatThelka"):
+            raise HTTPException(status_code=403, detail="Invalid admin session token or key")
 
     # Fetch all stores from database
     stores_cursor = db.stores.find({}, {"store_id": 1, "store_name": 1})

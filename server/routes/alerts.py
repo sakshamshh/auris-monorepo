@@ -134,6 +134,33 @@ async def edge_heartbeat(body: HeartbeatPayload):
     return {"status": "ok"}
 
 
+@router.get("/api/edge/heartbeats")
+async def get_edge_heartbeats(request: Request):
+    from routes.admin import require_admin_token
+    try:
+        require_admin_token(request)
+    except HTTPException:
+        if request.headers.get("X-Admin-Key", "") != (ADMIN_KEY or "PandatThelka"):
+            raise HTTPException(status_code=403, detail="Invalid admin key")
+            
+    devices = []
+    # Fetch all devices seen in last 24h
+    one_day_ago = (datetime.now(timezone.utc) - timedelta(days=1)).isoformat()
+    cursor = db.edge_heartbeats.find({"last_seen": {"$gte": one_day_ago}}).sort("last_seen", -1)
+    async for doc in cursor:
+        doc.pop("_id", None)
+        # Calculate active status (offline if not seen in 5 mins)
+        last_seen = datetime.fromisoformat(doc["last_seen"])
+        if datetime.now(timezone.utc) - last_seen > timedelta(minutes=5):
+            doc["status"] = "offline"
+        else:
+            doc["status"] = "active"
+        doc["last_heartbeat"] = doc["last_seen"]
+        devices.append(doc)
+        
+    return {"devices": devices}
+
+
 # Setup logging for standalone runs
 EXPLICIT_ENV_PATH = "/home/retailiq-key/auris-server/.env"
 if os.path.exists(EXPLICIT_ENV_PATH):
