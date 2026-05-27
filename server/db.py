@@ -83,9 +83,6 @@ class Database:
     def edge_heartbeats(self):
         return self._db.edge_heartbeats
 
-    @property
-    def reid_queue(self):
-        return self._db.reid_queue
 
     @property
     def audit_log(self):
@@ -168,8 +165,7 @@ async def ensure_indexes():
         ("pseudo_labels", [("store_id", 1)], {}),
         ("training_frames", [("store_id", 1), ("camera_id", 1)], {}),
         ("edge_heartbeats", ["camera_key"], {"unique": True}),
-        ("reid_queue", [("status", 1), ("created_at", 1)], {}),
-        ("person_embeddings", [("store_id", 1), ("created_at", 1)], {"expireAfterSeconds": 3600}),
+        ("floormaps", [("store_id", 1), ("floor_id", 1)], {"unique": True}),
         ("audit_log", ["timestamp"], {"expireAfterSeconds": 90 * 24 * 60 * 60}),
     ]
     
@@ -191,4 +187,5 @@ COLLECTION_CAPS = {
     "hard_cases": 10_000,
     "pseudo_labels": 50_000,
     "training_frames": 5_000,
+    "floormaps": 1_000,
 }

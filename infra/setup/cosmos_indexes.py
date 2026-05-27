@@ -110,7 +110,12 @@ COLLECTIONS_SPEC = {
             {"keys": [("store_id", pymongo.ASCENDING), ("camera_id", pymongo.ASCENDING)], "options": {}},
             {"keys": [("created_at", pymongo.DESCENDING)], "options": {}},
         ]
-    }
+    },
+    "floormaps": {
+        "indexes": [
+            {"keys": [("store_id", pymongo.ASCENDING), ("floor_id", pymongo.ASCENDING)], "options": {"unique": True, "sparse": True}},
+        ]
+    },
 }
 
 def format_index_keys(keys):

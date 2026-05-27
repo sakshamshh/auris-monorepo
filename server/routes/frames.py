@@ -40,7 +40,6 @@ MODEL = None
 FIRE_MODEL = None
 trackers: Dict[str, Any] = {}
 _homography_cache: Dict[str, dict] = {}
-REID_ENABLED = os.getenv("REID_ENABLED", "false").lower() == "true"
 db_timeout_count = 0
 
 # Live snapshot store: {store_id_camera_id: {frame_b64, timestamp, people_now}}
@@ -336,18 +335,7 @@ async def execute_frame_inference_and_tracking(payload: FramePayload, api_key: s
                     }},
                     upsert=True,
                 )
-                if REID_ENABLED:
-                    crop_b64 = crop_meta[0]["jpeg_b64"] if crop_meta else None
-                    await db.reid_queue.insert_one({
-                        "store_id": s_id,
-                        "camera_id": c_id,
-                        "track_id": tid,
-                        "bbox": t["bbox_normalised"],
-                        "jpeg_b64": crop_b64,
-                        "floor_id": cam_floor,
-                        "status": "pending",
-                        "created_at": datetime.now(timezone.utc).isoformat(),
-                    })
+
 
             prev_y = track_y_positions[s_id][c_id].get(tid)
             if prev_y is not None and abs(cy - counting_line_y) > 0.08:

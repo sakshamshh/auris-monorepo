@@ -451,6 +451,22 @@ def _heartbeat_loop(store_id: str, cameras: List[str]):
                     "queue_depth": 0,
                 }
                 requests.post(url, json=payload, headers=headers, timeout=5)
+
+                # Fetch spatial context from floor map
+                try:
+                    ctx_url = f"{base}/api/floormap/camera-context/{store_id}/{cam_id}"
+                    ctx_resp = requests.get(ctx_url, headers=headers, timeout=5)
+                    if ctx_resp.status_code == 200:
+                        ctx = ctx_resp.json()
+                        if ctx.get("positioned"):
+                            logger.info(
+                                f"[{cam_id}] Spatial context: position=({ctx['position']['x_m']}m,"
+                                f"{ctx['position']['y_m']}m) height={ctx['position']['height_m']}m "
+                                f"zones={[z['zone_label'] for z in ctx['zones_in_view']]}"
+                            )
+                except Exception:
+                    pass  # non-critical
+
         except Exception as e:
             logger.debug("Heartbeat failed: %s", e)
         time.sleep(60)

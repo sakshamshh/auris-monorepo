@@ -16,24 +16,19 @@ from db import db, ensure_indexes
 from routes import (
     auth,
     admin,
-    analytics,
     frames,
-    blobs,
     calibration,
     cameras,
-    mapping,
-    spatial,
     alerts,
     training,
     report,
 )
 from routes.onboarding import router as onboarding_router
 from routes.factory import router as factory_router
+from routes.floormap import router as floormap_router
 from routes.report_pdf import router as report_pdf_router
-from routes.retail import router as retail_router
 from routes.alerts import dispatch_camera_offline_alert
 from services.auto_calibrator_job import run_auto_calibrator_loop
-from services.reid_worker import run_reid_worker_loop
 
 load_dotenv()
 
@@ -43,7 +38,6 @@ logging.basicConfig(
 )
 logger = logging.getLogger("AurisCloud")
 
-REID_ENABLED = os.getenv("REID_ENABLED", "false").lower() == "true"
 OFFLINE_THRESHOLD_SEC = int(os.getenv("CAMERA_OFFLINE_SEC", "120"))
 AUTO_CALIB_INTERVAL_SEC = int(os.getenv("AUTO_CALIB_INTERVAL_SEC", "3600"))
 
@@ -76,11 +70,6 @@ async def lifespan(app: FastAPI):
         asyncio.create_task(run_auto_calibrator_loop(AUTO_CALIB_INTERVAL_SEC)),
         asyncio.create_task(frames.run_priority_queue_worker()),
     ]
-    if REID_ENABLED:
-        tasks.append(asyncio.create_task(run_reid_worker_loop()))
-        logger.info("Re-ID worker enabled")
-    else:
-        logger.info("Re-ID worker disabled (set REID_ENABLED=true to enable)")
 
     yield
 
@@ -120,20 +109,16 @@ app.add_middleware(
 app.include_router(auth.router)
 app.include_router(admin.router)
 app.include_router(admin.router, prefix="/api")
-app.include_router(analytics.router)
 app.include_router(frames.router)
-app.include_router(blobs.router)
 app.include_router(calibration.router)
 app.include_router(cameras.router)
-app.include_router(mapping.router)
-app.include_router(spatial.router)
 app.include_router(alerts.router)
 app.include_router(training.router)
 app.include_router(report.router)
 app.include_router(onboarding_router)
 app.include_router(factory_router)
+app.include_router(floormap_router)
 app.include_router(report_pdf_router)
-app.include_router(retail_router)
 
 
 @app.get("/health")
@@ -148,4 +133,3 @@ if __name__ == "__main__":
     port = int(os.getenv("PORT", "8000"))
     uvicorn.run("main:app", host=host, port=port, reload=False)
 
-# Add to main.py: from routes.onboarding import router as onboarding_router
