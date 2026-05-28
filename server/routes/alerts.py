@@ -330,7 +330,9 @@ async def main():
         db = client[DB_NAME]
         now_utc = datetime.now(timezone.utc)
 
-        factories_cursor = db.factory_config.find({"status": "live"})
+        factories_cursor = db.factory_config.find(
+            {"status": {"$in": ["live", "pending", "trial"]}}
+        )
         factories = []
         async for f in factories_cursor:
             factories.append(f)
