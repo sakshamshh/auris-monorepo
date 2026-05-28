@@ -34,6 +34,23 @@ const ClientsTab = () => {
   const [clients, setClients] = useState<any[]>([]);
   const [selectedClient, setSelectedClient] = useState<any>(null);
 
+  // Add Client Modal states
+  const [showAdd, setShowAdd] = useState(false);
+  const [newStore, setNewStore] = useState({
+    store_id: '',
+    store_name: '',
+    plan: 'FACTORY',
+    total_headcount: 10,
+    shift_start: '09:00',
+    shift_end: '18:00',
+    wage_per_day: 500
+  });
+  const [adding, setAdding] = useState(false);
+
+  // Edit Configuration states
+  const [editing, setEditing] = useState(false);
+  const [editData, setEditData] = useState<any>(null);
+
   useEffect(() => {
     fetchAuth(`${API_BASE}/api/admin/stores`)
     .then(res => res.json())
@@ -41,12 +58,66 @@ const ClientsTab = () => {
     .catch(console.error);
   }, []);
 
+  const handleAddClient = async () => {
+    if (!newStore.store_id || !newStore.store_name) {
+      alert('Please fill out Store ID and Store Name');
+      return;
+    }
+    setAdding(true);
+    try {
+      const res = await fetchAuth(`${API_BASE}/api/admin/stores`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(newStore)
+      });
+      if (!res.ok) throw new Error('Failed');
+      const data = await res.json();
+      setClients(prev => [...prev, data.store || data]);
+      setShowAdd(false);
+      // Reset form
+      setNewStore({
+        store_id: '',
+        store_name: '',
+        plan: 'FACTORY',
+        total_headcount: 10,
+        shift_start: '09:00',
+        shift_end: '18:00',
+        wage_per_day: 500
+      });
+    } catch (e) {
+      alert('Failed to create client');
+    } finally {
+      setAdding(false);
+    }
+  };
+
+  const handleEditSave = async () => {
+    try {
+      const res = await fetchAuth(`${API_BASE}/api/admin/stores/${selectedClient.store_id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(editData)
+      });
+      if (!res.ok) throw new Error('Save failed');
+      setClients(prev => prev.map(c => 
+        c.store_id === selectedClient.store_id ? {...c, ...editData} : c
+      ));
+      setSelectedClient((prev: any) => ({ ...prev, ...editData }));
+      setEditing(false);
+    } catch {
+      alert('Save failed');
+    }
+  };
+
   return (
-    <div className="flex gap-6 h-full">
+    <div className="flex gap-6 h-full relative">
       <div className="flex-1 flex flex-col min-h-0">
         <div className="flex justify-between items-center mb-4">
           <h2 className="text-lg font-semibold text-[#111827]">Clients</h2>
-          <button className="bg-[#2563EB] text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-blue-700 transition-colors flex items-center gap-2">
+          <button 
+            onClick={() => setShowAdd(true)}
+            className="bg-[#2563EB] text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-blue-700 transition-colors flex items-center gap-2"
+          >
             <Plus size={16} /> Add Client
           </button>
         </div>
@@ -67,7 +138,7 @@ const ClientsTab = () => {
                 <tr 
                   key={client.store_id} 
                   className={`border-b border-[#E5E7EB] last:border-0 cursor-pointer hover:bg-gray-50 transition-colors ${selectedClient?.store_id === client.store_id ? 'bg-gray-50' : ''}`}
-                  onClick={() => setSelectedClient(client)}
+                  onClick={() => { setSelectedClient(client); setEditing(false); }}
                 >
                   <td className="px-4 py-4 text-sm font-medium text-[#111827]">{client.store_name}</td>
                   <td className="px-4 py-4">
@@ -99,24 +170,146 @@ const ClientsTab = () => {
       {selectedClient && (
         <div className="w-80 flex-shrink-0 flex flex-col min-h-0 pt-10">
           <Card className="p-5">
-            <h3 className="text-base font-semibold text-[#111827] mb-1">{selectedClient.store_name}</h3>
-            <p className="text-sm text-gray-500 font-mono mb-6">{selectedClient.store_id}</p>
-            
-            <div className="space-y-4">
-              <div>
-                <label className="text-xs font-medium text-gray-500 uppercase tracking-wider block mb-1">API Key</label>
-                <div className="bg-gray-50 border border-[#E5E7EB] rounded px-3 py-2 text-sm font-mono text-gray-800 break-all">
-                  {selectedClient.api_key || '••••••••••••••••••••••••••••••••'}
+            {editing ? (
+              <div className="space-y-4">
+                <h3 className="text-base font-semibold text-[#111827] mb-4">Edit Configuration</h3>
+                
+                <div>
+                  <label className="text-xs font-medium text-gray-500 block mb-1">Store Name</label>
+                  <input
+                    type="text"
+                    value={editData?.store_name || ''}
+                    onChange={e => setEditData((prev: any) => ({ ...prev, store_name: e.target.value }))}
+                    className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-blue-500"
+                  />
+                </div>
+
+                <div>
+                  <label className="text-xs font-medium text-gray-500 block mb-1">Shift Start</label>
+                  <input
+                    type="time"
+                    value={editData?.shift_start || ''}
+                    onChange={e => setEditData((prev: any) => ({ ...prev, shift_start: e.target.value }))}
+                    className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-blue-500"
+                  />
+                </div>
+
+                <div>
+                  <label className="text-xs font-medium text-gray-500 block mb-1">Shift End</label>
+                  <input
+                    type="time"
+                    value={editData?.shift_end || ''}
+                    onChange={e => setEditData((prev: any) => ({ ...prev, shift_end: e.target.value }))}
+                    className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-blue-500"
+                  />
+                </div>
+
+                <div>
+                  <label className="text-xs font-medium text-gray-500 block mb-1">Total Headcount</label>
+                  <input
+                    type="number"
+                    value={editData?.total_headcount || 0}
+                    onChange={e => setEditData((prev: any) => ({ ...prev, total_headcount: Number(e.target.value) }))}
+                    className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-blue-500"
+                  />
+                </div>
+
+                <div>
+                  <label className="text-xs font-medium text-gray-500 block mb-1">Wage Per Day (₹)</label>
+                  <input
+                    type="number"
+                    value={editData?.wage_per_day || 0}
+                    onChange={e => setEditData((prev: any) => ({ ...prev, wage_per_day: Number(e.target.value) }))}
+                    className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-blue-500"
+                  />
+                </div>
+
+                <div className="flex gap-2 pt-2">
+                  <button onClick={() => setEditing(false)} className="flex-1 border border-gray-200 rounded-lg py-2 text-sm text-gray-600 hover:bg-gray-50">
+                    Cancel
+                  </button>
+                  <button onClick={handleEditSave} className="flex-1 bg-[#2563EB] text-white rounded-lg py-2 text-sm font-medium hover:bg-blue-700">
+                    Save
+                  </button>
                 </div>
               </div>
-              
-              <div className="pt-4 border-t border-[#E5E7EB]">
-                <button className="w-full bg-white border border-gray-300 text-gray-700 px-4 py-2 rounded-lg text-sm font-medium hover:bg-gray-50 transition-colors">
-                  Edit Configuration
-                </button>
-              </div>
-            </div>
+            ) : (
+              <>
+                <h3 className="text-base font-semibold text-[#111827] mb-1">{selectedClient.store_name}</h3>
+                <p className="text-sm text-gray-500 font-mono mb-6">{selectedClient.store_id}</p>
+                
+                <div className="space-y-4">
+                  <div>
+                    <label className="text-xs font-medium text-gray-500 uppercase tracking-wider block mb-1">API Key</label>
+                    <div className="bg-gray-50 border border-[#E5E7EB] rounded px-3 py-2 text-sm font-mono text-gray-800 break-all">
+                      {selectedClient.api_key || '••••••••••••••••••••••••••••••••'}
+                    </div>
+                  </div>
+                  
+                  <div className="space-y-2 text-sm text-gray-600">
+                    <div><span className="font-medium text-gray-500">Shift:</span> {selectedClient.shift_start || 'N/A'} - {selectedClient.shift_end || 'N/A'}</div>
+                    <div><span className="font-medium text-gray-500">Headcount:</span> {selectedClient.total_headcount || 'N/A'}</div>
+                    <div><span className="font-medium text-gray-500">Wage:</span> ₹{selectedClient.wage_per_day || 'N/A'} / day</div>
+                  </div>
+
+                  <div className="pt-4 border-t border-[#E5E7EB]">
+                    <button 
+                      onClick={() => { setEditing(true); setEditData(selectedClient); }}
+                      className="w-full bg-white border border-gray-300 text-gray-700 px-4 py-2 rounded-lg text-sm font-medium hover:bg-gray-50 transition-colors"
+                    >
+                      Edit Configuration
+                    </button>
+                  </div>
+                </div>
+              </>
+            )}
           </Card>
+        </div>
+      )}
+
+      {showAdd && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
+          <div className="bg-white rounded-xl p-6 w-full max-w-md shadow-xl max-h-[90vh] overflow-y-auto">
+            <h3 className="text-base font-semibold mb-4 text-[#111827]">Add Client</h3>
+            <div className="space-y-3">
+              {[
+                ['store_id', 'Store ID', 'text'],
+                ['store_name', 'Store Name', 'text'],
+                ['total_headcount', 'Total Headcount', 'number'],
+                ['shift_start', 'Shift Start', 'time'],
+                ['shift_end', 'Shift End', 'time'],
+                ['wage_per_day', 'Wage Per Day (₹)', 'number'],
+              ].map(([key, label, type]) => (
+                <div key={key}>
+                  <label className="text-xs font-medium text-gray-500 block mb-1">{label}</label>
+                  <input
+                    type={type}
+                    value={(newStore as any)[key]}
+                    onChange={e => setNewStore(prev => ({
+                      ...prev,
+                      [key]: type === 'number' ? Number(e.target.value) : e.target.value
+                    }))}
+                    className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-blue-500 text-[#111827]"
+                  />
+                </div>
+              ))}
+            </div>
+            <div className="flex gap-3 mt-5">
+              <button 
+                onClick={() => setShowAdd(false)} 
+                className="flex-1 border border-gray-200 rounded-lg py-2 text-sm text-gray-600 hover:bg-gray-50"
+              >
+                Cancel
+              </button>
+              <button 
+                onClick={handleAddClient} 
+                disabled={adding} 
+                className="flex-1 bg-[#2563EB] text-white rounded-lg py-2 text-sm font-medium hover:bg-blue-700 disabled:opacity-50"
+              >
+                {adding ? 'Creating...' : 'Create'}
+              </button>
+            </div>
+          </div>
         </div>
       )}
     </div>
@@ -241,14 +434,41 @@ const TrainingTab = ({ token }: { token: string }) => {
 
   const handleExport = async () => {
     try {
-      await fetchAuth(`${API_BASE}/api/training/export-yolo-full`, {
-        method: 'POST',
-        headers: { 'Authorization': `Bearer ${token}` }
-      });
-      alert('Export triggered successfully.');
+      const res = await fetchAuth(
+        `${API_BASE}/api/training/export-yolo-full`,
+        { method: 'GET' }
+      );
+      if (!res.ok) throw new Error('Export failed');
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `auris_training_${new Date().toISOString().split('T')[0]}.zip`;
+      a.click();
+      URL.revokeObjectURL(url);
     } catch (e) {
-      console.error(e);
-      alert('Export failed.');
+      alert('Export failed — check if training data exists first.');
+    }
+  };
+
+  const handleReview = async (hc: any, approved: boolean) => {
+    try {
+      await fetchAuth(`${API_BASE}/api/training/hard-cases/${hc._id}/review`, {
+        method: 'POST',
+        headers: { 
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({ approved })
+      });
+      setHardCases(prev => prev.filter(c => c._id !== hc._id));
+      setStats(prev => ({
+        ...prev,
+        hard_cases_pending: Math.max(0, prev.hard_cases_pending - 1)
+      }));
+    } catch {
+      // Silently remove from UI anyway — don't block the reviewer
+      setHardCases(prev => prev.filter(c => c._id !== hc._id));
     }
   };
 
@@ -290,10 +510,16 @@ const TrainingTab = ({ token }: { token: string }) => {
               <div className="p-3 border-t border-[#E5E7EB] bg-gray-50 flex flex-col justify-between">
                 <div className="text-xs text-gray-600 mb-2 font-medium">Conf: {(hc.confidence * 100).toFixed(1)}%</div>
                 <div className="flex gap-2">
-                  <button className="flex-1 bg-white border border-gray-200 text-green-600 py-1 rounded flex justify-center hover:bg-green-50 transition-colors">
+                  <button 
+                    onClick={() => handleReview(hc, true)} 
+                    className="flex-1 bg-white border border-gray-200 text-green-600 py-1 rounded flex justify-center hover:bg-green-50 transition-colors"
+                  >
                     <Check size={14} />
                   </button>
-                  <button className="flex-1 bg-white border border-gray-200 text-red-600 py-1 rounded flex justify-center hover:bg-red-50 transition-colors">
+                  <button 
+                    onClick={() => handleReview(hc, false)} 
+                    className="flex-1 bg-white border border-gray-200 text-red-600 py-1 rounded flex justify-center hover:bg-red-50 transition-colors"
+                  >
                     <X size={14} />
                   </button>
                 </div>
@@ -315,7 +541,7 @@ const SystemTab = ({ token }: { token: string }) => {
   const [devices, setDevices] = useState<any[]>([]);
 
   useEffect(() => {
-    fetchAuth(`${API_BASE}/api/health`)
+    fetchAuth(`${API_BASE}/health`)
       .then(res => res.json())
       .then(data => setHealth(data))
       .catch(console.error);

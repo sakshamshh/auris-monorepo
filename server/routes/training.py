@@ -148,6 +148,30 @@ async def review_case(request: Request, body: ReviewAction):
     return {"status": status}
 
 
+@router.post("/api/training/hard-cases/{case_id}/review")
+async def review_hard_case(request: Request, case_id: str, body: dict):
+    """Mark a hard case as reviewed (approved or rejected)."""
+    require_admin(request)
+    from bson import ObjectId
+    try:
+        oid = ObjectId(case_id)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid case_id")
+
+    approved = body.get("approved", False)
+    status = "approved" if approved else "rejected"
+    await db.hard_cases.update_one(
+        {"_id": oid},
+        {"$set": {
+            "reviewed": True,
+            "approved": approved,
+            "status": status,
+            "reviewed_at": datetime.now(timezone.utc).isoformat()
+        }}
+    )
+    return {"status": "ok", "approved": approved}
+
+
 @router.get("/api/training/export-yolo")
 @router.post("/api/training/export-yolo")
 async def export_yolo_dataset(request: Request, store_id: Optional[str] = None):
