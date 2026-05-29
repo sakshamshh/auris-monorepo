@@ -152,8 +152,19 @@ def run_inference_and_tracking(payload: FramePayload) -> Tuple[List, List, bool,
             if full_img is not None:
                 fh, fw = full_img.shape[:2]
                 
+                # CLAHE enhancement to improve detection in hazy/smoke environments
+                def enhance_hazy_frame(img):
+                    lab = cv2.cvtColor(img, cv2.COLOR_BGR2LAB)
+                    l, a, b = cv2.split(lab)
+                    clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8, 8))
+                    l = clahe.apply(l)
+                    enhanced = cv2.merge([l, a, b])
+                    return cv2.cvtColor(enhanced, cv2.COLOR_LAB2BGR)
+
+                inference_img = enhance_hazy_frame(full_img)
+                
                 # 1. Run YOLOv8 on full frame: conf=0.10, iou=0.45, classes=[0] (person)
-                results = MODEL(full_img, conf=0.10, iou=0.45, classes=[0], verbose=False)
+                results = MODEL(inference_img, conf=0.10, iou=0.45, classes=[0], verbose=False)
                 
                 yolo_dets = []
                 for r in results:

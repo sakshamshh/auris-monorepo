@@ -63,7 +63,7 @@ TMPDIR="$PIP_TMP_DIR" ./venv/bin/pip install "opencv-contrib-python-headless<4.1
 
 echo -e "\e[34m[6/10] Patching YOLO model path in routes/frames.py...\e[0m"
 if [ -f "routes/frames.py" ]; then
-    sed -i 's/MODEL = YOLO("yolov8m.pt")/MODEL = YOLO("yolov8n.onnx", task="detect")/' routes/frames.py
+    sed -i 's/yolov8n.onnx/yolov8s.onnx/' routes/frames.py
     echo "Patched routes/frames.py successfully."
 else
     echo -e "\e[33mWarning: routes/frames.py not found to patch. Skipping.\e[0m"

@@ -394,6 +394,27 @@ class CameraWorker(threading.Thread):
                 motion_pixel_count = cv2.countNonZero(mask)
                 logger.info(f"[{camera_id}] Motion pixels: {motion_pixel_count} threshold: {MOTION_THRESHOLD}")
                 
+                # Smoke/noise filter — only send frames with solid contours
+                if not calibration_mode:
+                    contours, _ = cv2.findContours(
+                        mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
+                    )
+                    has_solid_motion = False
+                    for cnt in contours:
+                        area = cv2.contourArea(cnt)
+                        if area < 500:
+                            continue
+                        hull = cv2.convexHull(cnt)
+                        hull_area = cv2.contourArea(hull)
+                        if hull_area == 0:
+                            continue
+                        solidity = area / hull_area
+                        if solidity > 0.55:  # solid shape = person not smoke
+                            has_solid_motion = True
+                            break
+                    if not has_solid_motion:
+                        continue  # skip this frame — only smoke/noise detected
+                
                 # Still detect motion with MOG2 — if no motion, skip sending
                 contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
                 has_motion = any(cv2.contourArea(c) >= MIN_CONTOUR_AREA for c in contours)
