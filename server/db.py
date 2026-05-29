@@ -92,6 +92,10 @@ class Database:
     def training_frames(self):
         return self._db.training_frames
 
+    @property
+    def floormaps(self):
+        return self._db.floormaps
+
 
 def get_client() -> AsyncIOMotorClient:
     global _client

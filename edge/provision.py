@@ -65,7 +65,7 @@ SERVER_URL = "https://auris.skymlabs.com"
 CONFIG_ENDPOINT = f"{SERVER_URL}/api/edge/config"
 FRAMES_ENDPOINT = f"{SERVER_URL}/api/frames"
 CAMERAS_UPDATE_ENDPOINT = f"{SERVER_URL}/api/factory/cameras/update"
-ADMIN_KEY = "PandatThelka"
+ADMIN_KEY = "auris2026adminkey"
 
 # ------------------------------------------------------------------------------
 # HELPER FUNCTIONS

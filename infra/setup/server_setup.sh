@@ -115,6 +115,7 @@ echo -e "\n\e[32m===============================================================
 echo -e "\e[32mServer setup complete!\e[0m"
 echo -e "\e[32m==============================================================================\e[0m"
 echo -e "\e[33mNext steps:\e[0m"
+echo -e "# Note: code reads MONGODB_URI not COSMOS_URI"
 echo -e "1. Copy .env file: \e[36mscp .env $RUN_USER@<IP>:$SERVER_DIR/\e[0m"
 echo -e "2. Copy ONNX model: \e[36mscp yolov8n.onnx $RUN_USER@<IP>:$SERVER_DIR/\e[0m"
 echo -e "3. Set up SSL: \e[36msudo certbot --nginx -d auris.skymlabs.com -d hq.skymlabs.com\e[0m"

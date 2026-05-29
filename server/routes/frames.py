@@ -652,7 +652,7 @@ async def get_live_snapshot_impl(request: Request, store_id: str, camera_id: str
         if not admin_key:
             admin_key = request.query_params.get("key", "")
             
-        expected_key = ADMIN_KEY or "PandatThelka"
+        expected_key = ADMIN_KEY or "auris2026adminkey"
         if expected_key and admin_key == expected_key:
             is_valid = True
             
@@ -727,7 +727,7 @@ async def get_live_cameras(request: Request, key: Optional[str] = None):
         # Check query param as fallback for backward compatibility
         from db import ADMIN_KEY
         admin_key = key or request.query_params.get("key", "")
-        if not admin_key or admin_key != (ADMIN_KEY or "PandatThelka"):
+        if not admin_key or admin_key != (ADMIN_KEY or "auris2026adminkey"):
             raise HTTPException(status_code=403, detail="Invalid admin session token or key")
 
     # Fetch all stores from database
@@ -774,7 +774,7 @@ async def get_live_cameras(request: Request, key: Optional[str] = None):
 async def get_live_stream(request: Request, store_id: str, camera_id: str, key: Optional[str] = None, frames_limit: Optional[int] = None):
     """Serves a real-time MJPEG (multipart/x-mixed-replace) stream of annotated frames."""
     from db import ADMIN_KEY
-    expected_key = ADMIN_KEY or "PandatThelka"
+    expected_key = ADMIN_KEY or "auris2026adminkey"
     admin_key = key or request.query_params.get("key", "") or request.headers.get("X-Admin-Key", "")
     if not admin_key or admin_key != expected_key:
         raise HTTPException(status_code=403, detail="Invalid admin session token or key")

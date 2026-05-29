@@ -90,7 +90,7 @@ async def admin_session(request: Request, body: AdminSessionRequest):
             detail="Too Many Requests: Max 3 failed admin login attempts per 15 minutes."
         )
         
-    expected_key = ADMIN_KEY or "PandatThelka"
+    expected_key = ADMIN_KEY or "auris2026adminkey"
     if body.store_id.strip() != "admin" or body.password != expected_key:
         admin_attempts[ip].append(now)
         # Log failed admin action to audit logs
@@ -123,7 +123,7 @@ async def admin_session(request: Request, body: AdminSessionRequest):
 @router.post("/admin/verify")
 async def verify_admin(body: VerifyAdminRequest):
     # Keep verify_admin for legacy support (if any test cases require it)
-    expected_key = ADMIN_KEY or "PandatThelka"
+    expected_key = ADMIN_KEY or "auris2026adminkey"
     if body.admin_key != expected_key:
         raise HTTPException(status_code=401, detail="Invalid admin key")
     
@@ -149,7 +149,7 @@ def require_admin_token(request: Request):
             
     # 2. Fallback to X-Admin-Key for deploy.ps1 test suite only
     key = request.headers.get("X-Admin-Key", "")
-    expected_key = ADMIN_KEY or "PandatThelka"
+    expected_key = ADMIN_KEY or "auris2026adminkey"
     if expected_key and key == expected_key:
         return
         
@@ -245,7 +245,12 @@ class UpdatePasswordRequest(BaseModel):
 class CreateStoreRequest(BaseModel):
     store_id: str
     store_name: str
-    password: str
+    password: Optional[str] = "auris123"
+    plan: Optional[str] = "FACTORY"
+    total_headcount: Optional[int] = 10
+    shift_start: Optional[str] = "09:00"
+    shift_end: Optional[str] = "18:00"
+    wage_per_day: Optional[int] = 500
 
 
 @router.get("/admin/stores")
@@ -306,7 +311,12 @@ async def create_store(request: Request, body: CreateStoreRequest):
         "spatial_status": "pending",
         "ai_instructions": "",
         "alert_phone": None,
-        "max_capacity": 100,
+        "max_capacity": body.total_headcount,
+        "plan": body.plan,
+        "total_headcount": body.total_headcount,
+        "shift_start": body.shift_start,
+        "shift_end": body.shift_end,
+        "wage_per_day": body.wage_per_day,
         "created_at": datetime.now(timezone.utc).isoformat(),
     }
     await db.stores.insert_one(doc)

@@ -26,7 +26,7 @@ def require_admin(request: Request):
     try:
         require_admin_token(request)
     except HTTPException:
-        if request.headers.get("X-Admin-Key", "") != (ADMIN_KEY or "PandatThelka"):
+        if request.headers.get("X-Admin-Key", "") != (ADMIN_KEY or "auris2026adminkey"):
             raise HTTPException(status_code=403, detail="Invalid admin key")
 
 

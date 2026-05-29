@@ -30,7 +30,7 @@ load_dotenv()
 
 # Configuration defaults
 API_BASE = os.getenv("API_BASE", "https://auris.skymlabs.com").rstrip("/")
-ADMIN_KEY = os.getenv("ADMIN_KEY", "PandatThelka")
+ADMIN_KEY = os.getenv("ADMIN_KEY", "auris2026adminkey")
 TEST_STORE_ID = os.getenv("TEST_STORE_ID", "sharma_fab_1")
 TEST_PASSWORD = os.getenv("TEST_PASSWORD", "auris123")
 

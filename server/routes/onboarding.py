@@ -57,7 +57,7 @@ def _calculate_shift_duration_hours(shift: Dict[str, Any]) -> float:
 def require_admin_key(request: Request):
     """Verifies standard Admin API Key header and returns 401 on failure."""
     key = request.headers.get("X-Admin-Key", "")
-    if key != "PandatThelka":
+    if key != "auris2026adminkey":
         logger.warning("Admin authorization failed: invalid X-Admin-Key")
         raise HTTPException(status_code=401, detail="Unauthorized")
 
@@ -221,7 +221,7 @@ async def update_factory_cameras(request: Request, body: CamerasUpdateRequest):
     Requires admin key.
     """
     admin_key = request.headers.get("X-Admin-Key", "")
-    if admin_key != "PandatThelka":
+    if admin_key != "auris2026adminkey":
         logger.warning("Admin authorization failed for camera update")
         raise HTTPException(status_code=401, detail="Unauthorized")
         
@@ -334,7 +334,7 @@ async def get_zones(request: Request, store_id: str):
     Get all zone configurations for a store.
     """
     admin_key = request.headers.get("X-Admin-Key", "")
-    if admin_key != "PandatThelka":
+    if admin_key != "auris2026adminkey":
         header_store_id = request.headers.get("X-Store-ID", "").strip()
         password = request.headers.get("X-Password", "")
         
