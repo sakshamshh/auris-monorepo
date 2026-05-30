@@ -73,8 +73,8 @@ export const fetchZones = async (store_id, password) => {
   return res.data;
 };
 
-export const fetchLive = async (store_id, password) => {
-  const res = await api.get('/api/live', { headers: authHeaders(store_id, password) });
+export const fetchFactoryCameras = async (store_id, password) => {
+  const res = await api.get('/api/factory/cameras/live', { headers: authHeaders(store_id, password) });
   return res.data;
 };
 

@@ -75,6 +75,27 @@ const ClientsTab = () => {
     }
   };
 
+  const handleDeleteClient = async () => {
+    if (!selectedClient) return;
+    const confirmed = window.confirm(`Are you sure you want to delete ${selectedClient.store_name || selectedClient.store_id}? This cannot be undone.`);
+    if (!confirmed) return;
+    
+    try {
+      const res = await fetchAuth(`${API_BASE}/api/admin/stores/${selectedClient.store_id}`, {
+        method: 'DELETE'
+      });
+      if (res.ok) {
+        setClients(prev => prev.filter(c => c.store_id !== selectedClient.store_id));
+        setSelectedClient(null);
+        alert('Client deleted');
+      } else {
+        alert('Failed to delete client');
+      }
+    } catch (e) {
+      alert('Failed to delete client');
+    }
+  };
+
   useEffect(() => {
     fetchAuth(`${API_BASE}/api/admin/stores`)
     .then(res => res.json())
@@ -333,6 +354,15 @@ const ClientsTab = () => {
                           <p className="text-[10px] text-blue-600">Expires in 7 days</p>
                         </div>
                       )}
+                    </div>
+                    
+                    <div className="pt-4 border-t border-[#E5E7EB] flex justify-center">
+                      <button 
+                        onClick={handleDeleteClient}
+                        className="text-xs font-medium text-red-600 hover:text-red-800 hover:underline transition-colors"
+                      >
+                        Delete Client
+                      </button>
                     </div>
                   </div>
                 </div>

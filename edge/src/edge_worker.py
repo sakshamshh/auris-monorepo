@@ -1,7 +1,7 @@
 """
 Auris Edge Worker
 Production-grade edge device application for Skym Labs.
-Performs motion detection (MOG2), crop extraction, and cloud synchronization
+Performs motion detection (MOG2), full frame extraction, and cloud synchronization
 for the Auris AI computer vision platform.
 
 Runs 24/7 on Intel N100 mini PCs.
@@ -66,7 +66,7 @@ CALIBRATION_START_STR = os.getenv("CALIBRATION_START", datetime.now(timezone.utc
 
 logger.info(f"API Key loaded: {'YES' if CLOUD_API_KEY else 'NO - CHECK .env FILE'}")
 
-# Motion detection & crop extraction configuration
+# Motion detection configuration
 MOTION_THRESHOLD = 16
 MIN_CONTOUR_AREA = 300
 
@@ -267,7 +267,7 @@ class FrameUploader:
 
 class CameraWorker(threading.Thread):
     """
-    Handles RTSP connection, MOG2 background subtraction, and crop extraction for a single camera.
+    Handles RTSP connection, MOG2 background subtraction, and full-frame payload generation for a single camera.
     """
     def __init__(self, name: str, url: Any, target_fps: int, store_id: str, uploader: FrameUploader):
         super().__init__(name=name)

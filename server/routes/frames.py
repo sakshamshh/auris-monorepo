@@ -132,7 +132,7 @@ def blur_faces(frame, detections):
     return frame
 
 
-def run_inference_and_tracking(payload: FramePayload) -> Tuple[List, List, bool, Optional[np.ndarray]]:
+def run_inference_and_tracking(payload: FramePayload, yolo_conf: float = 0.40) -> Tuple[List, List, bool, Optional[np.ndarray]]:
     """Returns (deepsort_detections, crop_meta for training, fire_detected, blurred_full_img)."""
     if not MODEL:
         logger.warning("YOLO model not loaded — skipping inference")
@@ -163,10 +163,11 @@ def run_inference_and_tracking(payload: FramePayload) -> Tuple[List, List, bool,
 
                 inference_img = enhance_hazy_frame(full_img)
                 
-                # 1. Run YOLOv8 on full frame: conf=0.10, iou=0.45, classes=[0] (person)
-                results = MODEL(inference_img, conf=0.10, iou=0.45, classes=[0], verbose=False)
+                # 1. Run YOLOv8 on full frame using dynamic confidence threshold
+                results = MODEL(inference_img, conf=yolo_conf, iou=0.45, classes=[0], verbose=False)
                 
                 yolo_dets = []
+                frame_h, frame_w = full_img.shape[:2]
                 for r in results:
                     for box in r.boxes:
                         x1, y1, x2, y2 = box.xyxy[0].tolist()
@@ -180,6 +181,18 @@ def run_inference_and_tracking(payload: FramePayload) -> Tuple[List, List, bool,
                             abs_w = fw - abs_x
                         if abs_y + abs_h > fh:
                             abs_h = fh - abs_y
+                        
+                        # FIX 3 — aspect ratio filter: keep only portrait-ish detections (aspect < 1.8)
+                        aspect = abs_w / abs_h if abs_h > 0 else 999
+                        if aspect >= 1.8:
+                            continue
+                            
+                        # FIX 2 — bounding box size filter: person area typically 0.5% to 20% of frame area
+                        box_w = abs_w / frame_w
+                        box_h = abs_h / frame_h
+                        box_area = box_w * box_h
+                        if not (0.005 < box_area < 0.20):
+                            continue
                             
                         yolo_dets.append({
                             'bbox_abs': [abs_x, abs_y, abs_x + abs_w, abs_y + abs_h],
@@ -198,19 +211,17 @@ def run_inference_and_tracking(payload: FramePayload) -> Tuple[List, List, bool,
                     
                     deepsort_detections.append(([abs_x, abs_y, abs_w, abs_h], conf, "person"))
                     
-                    # For training / hard cases / pseudo labels: save full frame crops not tiny motion blobs
+                    # For training / hard cases / pseudo labels: save the full frame and the small normalized bounding box
                     if (0.10 <= conf < 0.40) or conf > 0.85:
-                        crop_img = blurred_img[abs_y:abs_y+abs_h, abs_x:abs_x+abs_w]
-                        if crop_img.size > 0:
-                            _, crop_buf = cv2.imencode('.jpg', crop_img, [int(cv2.IMWRITE_JPEG_QUALITY), 75])
-                            crop_b64 = base64.b64encode(crop_buf).decode('utf-8')
-                            
-                            norm_bbox = [abs_x / fw, abs_y / fh, abs_w / fw, abs_h / fh]
-                            crop_meta.append({
-                                "jpeg_b64": crop_b64,
-                                "bbox": norm_bbox,
-                                "max_conf": conf,
-                            })
+                        _, full_buf = cv2.imencode('.jpg', blurred_img, [int(cv2.IMWRITE_JPEG_QUALITY), 75])
+                        full_frame_out_b64 = base64.b64encode(full_buf).decode('utf-8')
+                        
+                        norm_bbox = [abs_x / fw, abs_y / fh, abs_w / fw, abs_h / fh]
+                        crop_meta.append({
+                            "jpeg_b64": full_frame_out_b64,
+                            "bbox": norm_bbox,
+                            "max_conf": conf,
+                        })
                 
                 # Run Fire model on full frame if loaded
                 if FIRE_MODEL:
@@ -247,9 +258,25 @@ async def execute_frame_inference_and_tracking(payload: FramePayload, api_key: s
         if not payload.full_frame_b64:
             return
 
+        # Get factory config to check privacy_mode and yolo_conf
+        factory_config = await db._db.factory_config.find_one({"store_id": s_id})
+        privacy_mode = False
+        yolo_conf = 0.40
+        if factory_config:
+            privacy_mode = factory_config.get("privacy_mode", False)
+            try:
+                yolo_conf = float(factory_config.get("yolo_conf") or factory_config.get("yolo_confidence") or os.getenv("YOLO_CONF", "0.40"))
+            except Exception:
+                yolo_conf = 0.40
+        else:
+            try:
+                yolo_conf = float(os.getenv("YOLO_CONF", "0.40"))
+            except Exception:
+                yolo_conf = 0.40
+
         loop = asyncio.get_event_loop()
         ds_detections, crop_meta, fire_detected, blurred_img = await loop.run_in_executor(
-            None, run_inference_and_tracking, payload
+            None, run_inference_and_tracking, payload, yolo_conf
         )
 
         if fire_detected:
@@ -259,7 +286,7 @@ async def execute_frame_inference_and_tracking(payload: FramePayload, api_key: s
             conf = meta["max_conf"]
             # Only save hard cases where YOLO found SOMETHING but was uncertain (0.10–0.40)
             if 0.10 <= conf < 0.40:
-                await save_hard_case(s_id, c_id, meta["jpeg_b64"], conf, payload.frame_id)
+                await save_hard_case(s_id, c_id, meta["jpeg_b64"], meta["bbox"], conf, payload.frame_id)
             elif conf > 0.85:
                 await save_pseudo_label(s_id, c_id, meta["jpeg_b64"], meta["bbox"], conf)
 
@@ -286,16 +313,6 @@ async def execute_frame_inference_and_tracking(payload: FramePayload, api_key: s
         zone_config = (store_config or {}).get("zone_config", {})
         counting_line_y = (store_config or {}).get("counting_line_y", 0.5)
         max_capacity = (store_config or {}).get("max_capacity", 100)
-
-        # Get factory config to check privacy_mode
-        factory_config = await db._db.factory_config.find_one({"store_id": s_id})
-        privacy_mode = False
-        if factory_config:
-            privacy_mode = factory_config.get("privacy_mode", False)
-        else:
-            store_name = (store_config or {}).get("store_name", s_id)
-            if "hospital" in s_id.lower() or "hospital" in store_name.lower() or "hosp" in s_id.lower() or "hosp" in store_name.lower():
-                privacy_mode = True
 
         calib_saved = False
         if payload.calibration_mode and payload.full_frame_b64:
@@ -652,7 +669,7 @@ async def get_live_snapshot_impl(request: Request, store_id: str, camera_id: str
         if not admin_key:
             admin_key = request.query_params.get("key", "")
             
-        expected_key = ADMIN_KEY or "auris2026adminkey"
+        expected_key = ADMIN_KEY
         if expected_key and admin_key == expected_key:
             is_valid = True
             
@@ -664,9 +681,6 @@ async def get_live_snapshot_impl(request: Request, store_id: str, camera_id: str
     privacy_mode = False
     if factory_config:
         privacy_mode = factory_config.get("privacy_mode", False)
-    else:
-        if "hospital" in store_id.lower() or "hosp" in store_id.lower():
-            privacy_mode = True
             
     if privacy_mode:
         raise HTTPException(status_code=403, detail="Stream viewer disabled for this client due to privacy mode")
@@ -774,9 +788,9 @@ async def get_live_cameras(request: Request, key: Optional[str] = None):
 async def get_live_stream(request: Request, store_id: str, camera_id: str, key: Optional[str] = None, frames_limit: Optional[int] = None):
     """Serves a real-time MJPEG (multipart/x-mixed-replace) stream of annotated frames."""
     from db import ADMIN_KEY
-    expected_key = ADMIN_KEY or "auris2026adminkey"
+    expected_key = ADMIN_KEY
     admin_key = key or request.query_params.get("key", "") or request.headers.get("X-Admin-Key", "")
-    if not admin_key or admin_key != expected_key:
+    if not expected_key or not admin_key or admin_key != expected_key:
         raise HTTPException(status_code=403, detail="Invalid admin session token or key")
 
     # Check privacy mode
@@ -784,9 +798,6 @@ async def get_live_stream(request: Request, store_id: str, camera_id: str, key: 
     privacy_mode = False
     if factory_config:
         privacy_mode = factory_config.get("privacy_mode", False)
-    else:
-        if "hospital" in store_id.lower() or "hosp" in store_id.lower():
-            privacy_mode = True
             
     if privacy_mode:
         raise HTTPException(status_code=403, detail="Stream viewer disabled for this client due to privacy mode")
@@ -850,8 +861,12 @@ async def get_live_stream(request: Request, store_id: str, camera_id: str, key: 
                             cv2.rectangle(frame, (x_offset - 5, y_offset - text_h - 5), (x_offset + text_w + 5, y_offset + 5), (0, 0, 0), -1)
                             cv2.putText(frame, overlay_text, (x_offset, y_offset), font, font_scale, (0, 255, 0), thickness, cv2.LINE_AA)
 
-                            # Re-encode to JPEG
-                            _, buf = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 70])
+                            # Resize to 640x480 max before encoding to speed up stream
+                            if frame.shape[1] > 640:
+                                frame = cv2.resize(frame, (640, 480))
+
+                            # Re-encode to JPEG at 60% quality
+                            _, buf = cv2.imencode('.jpg', frame, [int(cv2.IMWRITE_JPEG_QUALITY), 60])
                             frame_bytes = buf.tobytes()
                     except Exception as snap_err:
                         logger.warning(f"Error decoding frame for stream {store_id}/{camera_id}: {snap_err}")
@@ -879,8 +894,8 @@ async def get_live_stream(request: Request, store_id: str, camera_id: str, key: 
                     logger.info(f"Reached frames limit ({frames_limit}). Exiting stream.")
                     break
 
-                # Sleep 500ms between frames
-                await asyncio.sleep(0.5)
+                # Sleep 100ms between frames (10 FPS)
+                await asyncio.sleep(0.1)
 
         except asyncio.CancelledError:
             logger.info(f"MJPEG stream client disconnected for {store_id}/{camera_id}")

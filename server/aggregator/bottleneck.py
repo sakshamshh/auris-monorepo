@@ -12,7 +12,7 @@ from motor.motor_asyncio import AsyncIOMotorClient
 from dotenv import load_dotenv
 
 # Load environment variables
-load_dotenv()
+load_dotenv('/home/retailiq-key/auris-server/.env')
 
 # Setup logging
 logging.basicConfig(
@@ -23,6 +23,7 @@ logger = logging.getLogger("AurisAggregator.bottleneck")
 
 # Database Connection Settings
 MONGO_URI = (
+    os.getenv('MONGODB_URI') or
     os.getenv('COSMOS_CONNECTION_STRING') or 
     os.getenv('MONGO_URI') or 
     'mongodb://localhost:27017'
@@ -255,8 +256,13 @@ async def process_factory_bottlenecks(db, factory: dict, now: datetime):
         # total_cost_inr = total_cascade_idle_hours * hourly_wage
         total_cost_inr = total_cascade_idle_hours * hourly_wage
         
+        zone_label = zone_config.get("zone_label") or zone_config.get("label") or zone_id if zone_config else zone_id
+        if zone_id == "default_floor":
+            zone_label = "Factory Floor"
+            
         stations.append({
             "zone_id": zone_id,
+            "zone_label": zone_label,
             "event_count": event_count,
             "avg_duration_minutes": avg_duration_minutes,
             "total_cascade_idle_hours": total_cascade_idle_hours,
@@ -317,11 +323,18 @@ async def main():
         
         now = datetime.now(timezone.utc)
         
-        # Query active factories where status == "live"
-        factories_cursor = db.factory_config.find({"status": {"$in": ["live", "pending", "trial"]}})
+        # Get all active stores where plan=factory and status=live
+        stores_cursor = db.stores.find({"plan": "factory", "status": "live"})
         factories = []
-        async for f in factories_cursor:
-            factories.append(f)
+        async for s in stores_cursor:
+            store_id = s.get("store_id")
+            if not store_id:
+                continue
+            factory = await db.factory_config.find_one({"store_id": store_id})
+            if not factory:
+                # Use store doc as fallback
+                factory = s
+            factories.append(factory)
             
         logger.info("Found %d active (live) factories to process", len(factories))
         

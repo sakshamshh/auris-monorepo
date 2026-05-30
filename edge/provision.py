@@ -65,7 +65,9 @@ SERVER_URL = "https://auris.skymlabs.com"
 CONFIG_ENDPOINT = f"{SERVER_URL}/api/edge/config"
 FRAMES_ENDPOINT = f"{SERVER_URL}/api/frames"
 CAMERAS_UPDATE_ENDPOINT = f"{SERVER_URL}/api/factory/cameras/update"
-ADMIN_KEY = os.getenv("ADMIN_KEY") or "auris2026adminkey"
+ADMIN_KEY = os.getenv("ADMIN_KEY")
+if not ADMIN_KEY:
+    raise ValueError("ADMIN_KEY environment variable is required")
 
 # ------------------------------------------------------------------------------
 # HELPER FUNCTIONS

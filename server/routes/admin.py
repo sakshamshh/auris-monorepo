@@ -92,7 +92,7 @@ async def admin_session(request: Request, body: AdminSessionRequest):
             detail="Too Many Requests: Max 3 failed admin login attempts per 15 minutes."
         )
         
-    expected_key = ADMIN_KEY or "auris2026adminkey"
+    expected_key = ADMIN_KEY
     if body.store_id.strip() != "admin" or body.password != expected_key:
         admin_attempts[ip].append(now)
         # Log failed admin action to audit logs
@@ -125,7 +125,7 @@ async def admin_session(request: Request, body: AdminSessionRequest):
 @router.post("/admin/verify")
 async def verify_admin(body: VerifyAdminRequest):
     # Keep verify_admin for legacy support (if any test cases require it)
-    expected_key = ADMIN_KEY or "auris2026adminkey"
+    expected_key = ADMIN_KEY
     if body.admin_key != expected_key:
         raise HTTPException(status_code=401, detail="Invalid admin key")
     
@@ -151,7 +151,7 @@ def require_admin_token(request: Request):
             
     # 2. Fallback to X-Admin-Key for deploy.ps1 test suite only
     key = request.headers.get("X-Admin-Key", "")
-    expected_key = ADMIN_KEY or "auris2026adminkey"
+    expected_key = ADMIN_KEY
     if expected_key and key == expected_key:
         return
         
@@ -392,6 +392,31 @@ async def get_store_details(request: Request, store_id: str):
         "onboarded": store.get("onboarded", False),
         "prefill": prefill
     }
+
+
+@router.delete("/admin/stores/{store_id}")
+async def delete_store(request: Request, store_id: str):
+    require_admin(request)
+    # Delete from stores collection
+    res_stores = await db.stores.delete_one({"store_id": store_id})
+    if res_stores.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="Store not found")
+        
+    # Delete from factory_config collection
+    await db._db.factory_config.delete_one({"store_id": store_id})
+    
+    # Delete from zone_config collection
+    await db._db.zone_config.delete_one({"store_id": store_id})
+    
+    # Audit log
+    await db._db.audit_log.insert_one({
+        "action": "delete_store",
+        "store_id": store_id,
+        "timestamp": datetime.now(timezone.utc),
+        "ip": request.client.host if request.client else "unknown"
+    })
+    
+    return {"success": True}
 
 
 @router.patch("/admin/stores/{store_id}")

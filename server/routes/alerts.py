@@ -140,7 +140,7 @@ async def get_edge_heartbeats(request: Request):
     try:
         require_admin_token(request)
     except HTTPException:
-        if request.headers.get("X-Admin-Key", "") != (ADMIN_KEY or "auris2026adminkey"):
+        if not ADMIN_KEY or request.headers.get("X-Admin-Key", "") != ADMIN_KEY:
             raise HTTPException(status_code=403, detail="Invalid admin key")
             
     devices = []

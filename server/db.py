@@ -14,8 +14,12 @@ from motor.motor_asyncio import AsyncIOMotorClient, AsyncIOMotorDatabase
 load_dotenv()
 
 MONGODB_URI = os.getenv("MONGODB_URI") or os.getenv("MONGO_URI") or "mongodb://localhost:27017"
-MONGODB_DB = os.getenv("MONGODB_DB") or os.getenv("DB_NAME") or "auris"
-ADMIN_KEY = os.getenv("ADMIN_KEY", "")
+MONGODB_DB = os.getenv("MONGODB_DB") or os.getenv("DB_NAME")
+if not MONGODB_DB:
+    raise ValueError("MONGODB_DB or DB_NAME environment variable is required")
+ADMIN_KEY = os.getenv("ADMIN_KEY")
+if not ADMIN_KEY:
+    raise ValueError("ADMIN_KEY environment variable is required")
 
 _client: Optional[AsyncIOMotorClient] = None
 _db: Optional[AsyncIOMotorDatabase] = None

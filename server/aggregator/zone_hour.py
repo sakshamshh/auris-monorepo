@@ -11,7 +11,7 @@ from motor.motor_asyncio import AsyncIOMotorClient
 from dotenv import load_dotenv
 
 # Load environment variables
-load_dotenv()
+load_dotenv('/home/retailiq-key/auris-server/.env')
 
 # Setup logging
 logging.basicConfig(
@@ -22,6 +22,7 @@ logger = logging.getLogger("AurisAggregator.zone_hour")
 
 # Database Connection Settings
 MONGO_URI = (
+    os.getenv('MONGODB_URI') or
     os.getenv('COSMOS_CONNECTION_STRING') or 
     os.getenv('MONGO_URI') or 
     'mongodb://localhost:27017'
@@ -54,7 +55,7 @@ def _calculate_shift_duration_hours(shift: dict) -> float:
         return 8.0
 
 
-async def aggregate_zone_hour(db, factory: dict, zone: dict, hour_start: datetime, hour_end: datetime):
+async def aggregate_zone_hour(db, factory: dict, zone: dict, hour_start: datetime, hour_end: datetime, active_zones_count: int):
     """Aggregates all blobs for a single zone over the given hour window."""
     store_id = factory["store_id"]
     zone_id = zone["zone_id"]
@@ -62,15 +63,37 @@ async def aggregate_zone_hour(db, factory: dict, zone: dict, hour_start: datetim
     hour_start_iso = hour_start.isoformat()
     hour_end_iso = hour_end.isoformat()
     
+    # Extract camera assignments for this zone
+    raw_cameras = zone.get("camera_ids") or zone.get("cameras") or []
+    if isinstance(raw_cameras, str):
+        camera_list = [c.strip() for c in raw_cameras.split(",") if c.strip()]
+    elif isinstance(raw_cameras, list):
+        camera_list = [str(c).strip() for c in raw_cameras if str(c).strip()]
+    else:
+        camera_list = []
+        
     # 1. Pull all documents from blobs collection
     query = {
         "store_id": store_id,
-        "timestamp": {
-            "$gte": hour_start_iso,
-            "$lt": hour_end_iso
-        },
-        "zone_events.zone": zone_id
+        "$or": [
+            {
+                "timestamp": {
+                    "$gte": hour_start_iso,
+                    "$lt": hour_end_iso
+                }
+            },
+            {
+                "timestamp": {
+                    "$gte": hour_start,
+                    "$lt": hour_end
+                }
+            }
+        ]
     }
+    
+    # Filter by cameras if they are configured for the zone, otherwise use all cameras for this store
+    if camera_list:
+        query["camera_id"] = {"$in": camera_list}
     
     blobs_cursor = db.blobs.find(query)
     
@@ -81,6 +104,8 @@ async def aggregate_zone_hour(db, factory: dict, zone: dict, hour_start: datetim
         val = (doc.get('people_now') or doc.get('person_count') 
                or doc.get('count') or 0)
         person_counts.append(float(val))
+            
+    print(f"Fetched blobs count for store {store_id} zone {zone_id}: {len(person_counts)}")
             
     # 3. Perform calculations
     total_count = len(person_counts)
@@ -94,20 +119,48 @@ async def aggregate_zone_hour(db, factory: dict, zone: dict, hour_start: datetim
         people_present_max = 0.0
         
     # Expected headcount and threshold
-    expected_headcount = zone.get("expected_headcount") or 1
+    expected_headcount = zone.get("expected_headcount")
     try:
-        expected_headcount = float(expected_headcount)
+        if expected_headcount is not None:
+            expected_headcount = float(expected_headcount)
+        else:
+            expected_headcount = 0.0
     except Exception:
-        expected_headcount = 1.0
+        expected_headcount = 0.0
         
-    threshold = expected_headcount * 0.60
-    
+    if not expected_headcount or expected_headcount <= 0.0:
+        # Fallback to factory worker_count / number_of_zones
+        raw_worker_count = None
+        for key in ["worker_count", "totalHeadcount", "total_headcount"]:
+            if factory.get(key) is not None:
+                raw_worker_count = factory.get(key)
+                break
+        if raw_worker_count is None and "prefill" in factory:
+            raw_worker_count = factory["prefill"].get("worker_count")
+            
+        import re
+        parsed_worker_count = 0.0
+        if raw_worker_count is not None:
+            if isinstance(raw_worker_count, (int, float)):
+                parsed_worker_count = float(raw_worker_count)
+            else:
+                digits = re.findall(r'\d+', str(raw_worker_count))
+                if digits:
+                    parsed_worker_count = float(digits[0])
+                    
+        num_zones = active_zones_count if active_zones_count > 0 else 1
+        if parsed_worker_count > 0:
+            expected_headcount = parsed_worker_count / num_zones
+        else:
+            expected_headcount = 1.0
+        
     # Productive and Idle minutes
     if total_count == 0:
         productive_minutes = 0
     else:
-        above_threshold_count = sum(1 for c in person_counts if c >= threshold)
-        productive_minutes = round((above_threshold_count / total_count) * 60)
+        # Sum the proportional productivity per frame, capped at 1.0 per frame
+        productive_ratio = sum(min(1.0, c / expected_headcount) for c in person_counts) / total_count
+        productive_minutes = round(productive_ratio * 60)
         
     idle_minutes = 60 - productive_minutes
     
@@ -126,25 +179,42 @@ async def aggregate_zone_hour(db, factory: dict, zone: dict, hour_start: datetim
     # Fallback to general worker_categories list or dict structure if present
     worker_categories = factory.get("worker_categories")
     if worker_categories:
+        matched_cat_wage = 0.0
         if isinstance(worker_categories, dict):
             for key, val in worker_categories.items():
                 if key.lower().strip() == worker_cat or key.lower().strip() in worker_cat or worker_cat in key.lower().strip():
                     if isinstance(val, (int, float)):
-                        hourly_wage = float(val)
+                        matched_cat_wage = float(val)
                         break
                     elif isinstance(val, dict):
-                        hourly_wage = float(val.get("hourly_wage") or val.get("hourlyWage") or val.get("wage") or 0.0)
+                        matched_cat_wage = float(val.get("hourly_wage") or val.get("hourlyWage") or val.get("hourly_wage_inr") or val.get("hourlyWageInr") or val.get("wage") or 0.0)
                         break
         elif isinstance(worker_categories, list):
             for cat_item in worker_categories:
                 if isinstance(cat_item, dict):
                     cat_name = str(cat_item.get("name") or cat_item.get("category") or "").strip().lower()
                     if cat_name == worker_cat or cat_name in worker_cat or worker_cat in cat_name:
-                        hourly_wage = float(cat_item.get("hourly_wage") or cat_item.get("hourlyWage") or cat_item.get("wage") or cat_item.get("operatorWage") or 0.0)
+                        matched_cat_wage = float(cat_item.get("hourly_wage") or cat_item.get("hourlyWage") or cat_item.get("hourly_wage_inr") or cat_item.get("hourlyWageInr") or cat_item.get("wage") or cat_item.get("operatorWage") or 0.0)
                         break
+        if matched_cat_wage > 0.0:
+            hourly_wage = matched_cat_wage
                         
-    # Calculate idle cost
-    idle_cost_inr = (idle_minutes / 60.0) * hourly_wage * expected_headcount
+    # Fallback wage to 200.0 if not configured
+    if not hourly_wage or hourly_wage <= 0.0:
+        hourly_wage = 200.0
+
+    # Calculate dead_hours and dead_cost_inr
+    threshold_dead = expected_headcount * 0.70
+    if total_count == 0:
+        dead_hours = 0.0
+        dead_minutes = 0.0
+    else:
+        below_threshold_count = sum(1 for c in person_counts if c < threshold_dead)
+        dead_minutes = (below_threshold_count / total_count) * 60
+        dead_hours = dead_minutes / 60.0
+        
+    dead_cost_inr = dead_hours * hourly_wage * expected_headcount
+    print(f"Calculated dead_hours for store {store_id} zone {zone_id}: {dead_hours}, cost: {dead_cost_inr}")
     
     # Occupancy ratio (clipped to max 2.0)
     if expected_headcount > 0:
@@ -152,10 +222,10 @@ async def aggregate_zone_hour(db, factory: dict, zone: dict, hour_start: datetim
     else:
         occupancy_ratio = 0.0
         
-    # Phase 2 bottleneck detection (write zeros for now)
+    # Phase 2 bottleneck detection
     queue_count_max = 0
     queue_duration_mins = 0
-    bottleneck_flag = False
+    bottleneck_flag = dead_hours > 0.5
     
     # TTL and DateTime configurations
     hour_bucket = hour_start
@@ -183,7 +253,9 @@ async def aggregate_zone_hour(db, factory: dict, zone: dict, hour_start: datetim
                 "productive_minutes": productive_minutes,
                 "idle_minutes": idle_minutes,
                 "hourly_wage": hourly_wage,
-                "idle_cost_inr": idle_cost_inr,
+                "idle_cost_inr": dead_cost_inr,
+                "dead_hours": dead_hours,
+                "dead_cost_inr": dead_cost_inr,
                 "occupancy_ratio": occupancy_ratio,
                 "queue_count_max": queue_count_max,
                 "queue_duration_mins": queue_duration_mins,
@@ -195,6 +267,7 @@ async def aggregate_zone_hour(db, factory: dict, zone: dict, hour_start: datetim
         },
         upsert=True
     )
+    print(f"Saved to DB: {store_id}, {dead_hours}, {dead_cost_inr}")
 
 
 async def main():
@@ -205,9 +278,9 @@ async def main():
         client = AsyncIOMotorClient(MONGO_URI)
         db = client[DB_NAME]
         
-        # Truncate current UTC time to the hour
+        # Truncate current UTC time to the hour and use the previous hour bucket
         now_utc = datetime.now(timezone.utc)
-        hour_start = now_utc.replace(minute=0, second=0, microsecond=0)
+        hour_start = now_utc.replace(minute=0, second=0, microsecond=0) - timedelta(hours=1)
         hour_end = hour_start + timedelta(hours=1)
         
         hour_start_iso = hour_start.isoformat()
@@ -215,35 +288,54 @@ async def main():
         
         logger.info("Aggregating for hour bucket: %s to %s", hour_start_iso, hour_end_iso)
         
-        # Get all live factories
-        factories_cursor = db.factory_config.find({"status": {"$in": ["live", "pending", "trial"]}})
+        # Get all active stores where plan=factory and status=live
+        stores_cursor = db.stores.find({"plan": "factory", "status": "live"})
         factories = []
-        async for f in factories_cursor:
-            factories.append(f)
+        async for s in stores_cursor:
+            store_id = s.get("store_id")
+            if not store_id:
+                continue
+            factory = await db.factory_config.find_one({"store_id": store_id})
+            if not factory:
+                # Use store doc as fallback
+                factory = s
+            factories.append(factory)
             
         logger.info("Found %d active (live) factories", len(factories))
         
         for factory in factories:
             store_id = factory.get("store_id")
+            print(f"Factory store_id: {store_id}")
             if not store_id:
                 logger.warning("Found factory document missing store_id")
                 continue
                 
             # Get active work station zones for this store
-            zones_cursor = db.zone_config.find({
+            zones = await db.zone_config.find({
                 "store_id": store_id,
                 "active": True,
                 "zone_type": "WORK_STATION"
-            })
+            }).to_list(None)
             
-            async for zone in zones_cursor:
+            if not zones:
+                # No zones configured — use all cameras as one default zone
+                zones = [{
+                    'zone_id': 'default_floor',
+                    'zone_name': 'Factory Floor',
+                    'camera_ids': [],  # empty = use all cameras
+                    'expected_headcount': None  # will use factory worker_count fallback
+                }]
+            
+            active_zones_count = len(zones)
+            
+            for zone in zones:
                 zone_id = zone.get("zone_id")
                 if not zone_id:
                     logger.warning("Found active zone config missing zone_id for store %s", store_id)
                     continue
                     
                 try:
-                    await aggregate_zone_hour(db, factory, zone, hour_start, hour_end)
+                    await aggregate_zone_hour(db, factory, zone, hour_start, hour_end, active_zones_count)
                     logger.info("Aggregated store_id=%s zone_id=%s hour=%s", store_id, zone_id, hour_start_iso)
                 except Exception as zone_err:
                     logger.error("Error aggregating store_id=%s zone_id=%s: %s", store_id, zone_id, zone_err, exc_info=True)

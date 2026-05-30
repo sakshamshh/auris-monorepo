@@ -15,9 +15,9 @@ router = APIRouter()
 
 # Handle potential difference in get_db naming on test runners defensively
 try:
-    from db import get_db
+    from db import get_db, ADMIN_KEY
 except ImportError:
-    from db import get_database as get_db
+    from db import get_database as get_db, ADMIN_KEY
 
 
 def _get_raw_db():
@@ -57,7 +57,7 @@ def _calculate_shift_duration_hours(shift: Dict[str, Any]) -> float:
 def require_admin_key(request: Request):
     """Verifies standard Admin API Key header and returns 401 on failure."""
     key = request.headers.get("X-Admin-Key", "")
-    if key != "auris2026adminkey":
+    if not ADMIN_KEY or key != ADMIN_KEY:
         logger.warning("Admin authorization failed: invalid X-Admin-Key")
         raise HTTPException(status_code=401, detail="Unauthorized")
 
@@ -224,7 +224,7 @@ async def update_factory_cameras(request: Request, body: CamerasUpdateRequest):
     api_key = request.headers.get("X-API-Key", "")
     
     authorized = False
-    if admin_key == "auris2026adminkey":
+    if ADMIN_KEY and admin_key == ADMIN_KEY:
         authorized = True
     elif api_key:
         try:
@@ -348,7 +348,7 @@ async def get_zones(request: Request, store_id: str):
     Get all zone configurations for a store.
     """
     admin_key = request.headers.get("X-Admin-Key", "")
-    if admin_key != "auris2026adminkey":
+    if not ADMIN_KEY or admin_key != ADMIN_KEY:
         header_store_id = request.headers.get("X-Store-ID", "").strip()
         password = request.headers.get("X-Password", "")
         

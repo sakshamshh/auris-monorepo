@@ -95,6 +95,32 @@ def parse_computed_at(val: Any) -> Optional[datetime]:
 
 # --- ROUTES ---
 
+@router.get("/api/factory/cameras/live")
+async def get_factory_live_cameras(request: Request):
+    store = await _auth_store(request)
+    store_id = store["store_id"]
+    raw_db = _get_raw_db()
+    
+    # Count heartbeats in the last 2 minutes
+    two_mins_ago = datetime.now(timezone.utc) - timedelta(minutes=2)
+    online_count = await raw_db.edge_heartbeats.count_documents({
+        "store_id": store_id,
+        "last_seen": {"$gte": two_mins_ago}
+    })
+    
+    if online_count == 0:
+        # Fallback to configured camera count if no heartbeats
+        factory_conf = await raw_db.factory_config.find_one({"store_id": store_id})
+        if factory_conf:
+            cameras = factory_conf.get("cameras")
+            if isinstance(cameras, list):
+                online_count = len(cameras)
+            elif factory_conf.get("camera_count"):
+                online_count = factory_conf.get("camera_count")
+            
+    return {"total_online": online_count}
+
+
 @router.get("/api/factory/deadtime")
 async def get_deadtime(
     request: Request,
@@ -141,6 +167,7 @@ async def get_deadtime(
 
     by_zone_data = {}
     idle_minutes_by_date = {}
+    cost_by_date = {}
 
     cursor = raw_db.zone_hour_agg.find(query)
     async for doc in cursor:
@@ -149,7 +176,11 @@ async def get_deadtime(
             continue
 
         # Filter only workstation zones from bulk configuration
-        zone_info = zone_configs.get(zone_id)
+        if zone_id == "default_floor":
+            zone_info = {"zone_type": "WORK_STATION", "zone_label": "Factory Floor"}
+        else:
+            zone_info = zone_configs.get(zone_id)
+            
         if not zone_info or zone_info.get("zone_type") != "WORK_STATION":
             continue
 
@@ -180,6 +211,7 @@ async def get_deadtime(
             date_str = "unknown"
 
         idle_minutes_by_date[date_str] = idle_minutes_by_date.get(date_str, 0.0) + idle_min
+        cost_by_date[date_str] = cost_by_date.get(date_str, 0.0) + cost
 
     # Build by_zone return array
     by_zone = []
@@ -275,6 +307,18 @@ async def get_deadtime(
             dead_hours_total = 0.0
             dead_cost_inr_total = 0.0
 
+    # Time-partitioned costs and daily trend
+    today_date = now.date()
+    daily_trend = []
+    week_cost_inr = 0.0
+    for i in range(6, -1, -1):
+        d_str = (today_date - timedelta(days=i)).isoformat()
+        c = cost_by_date.get(d_str, 0.0)
+        daily_trend.append({"date": d_str, "cost": c})
+        week_cost_inr += c
+        
+    today_cost_inr = cost_by_date.get(today_date.isoformat(), 0.0)
+
     return {
         "period": {
             "from": from_date_dt.isoformat(),
@@ -284,8 +328,12 @@ async def get_deadtime(
             "expected_hours_total": expected_hours_total,
             "productive_hours_total": productive_hours_total,
             "dead_hours_total": dead_hours_total,
-            "dead_cost_inr": dead_cost_inr_total
+            "dead_cost_inr": dead_cost_inr_total,
+            "today_cost_inr": today_cost_inr,
+            "week_cost_inr": week_cost_inr,
+            "month_cost_inr": dead_cost_inr_total
         },
+        "daily_trend": daily_trend,
         "by_zone": by_zone,
         "worst_zone": worst_zone,
         "worst_day": worst_day,
@@ -462,7 +510,7 @@ async def get_edge_config(request: Request):
     config = await raw_db.factory_config.find_one({"store_id": store_id})
     
     store_name = store.get("store_name", store_id)
-    is_hosp = "hospital" in store_id.lower() or "hospital" in store_name.lower() or "hosp" in store_id.lower() or "hosp" in store_name.lower()
+    is_hosp = False
 
     if not config:
         logger.info("Factory config not found for store %s, auto-creating minimal", store_id)

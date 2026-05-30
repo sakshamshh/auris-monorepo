@@ -12,7 +12,7 @@ from motor.motor_asyncio import AsyncIOMotorClient
 from dotenv import load_dotenv
 
 # Load environment variables
-load_dotenv()
+load_dotenv('/home/retailiq-key/auris-server/.env')
 
 # Setup logging
 logging.basicConfig(
@@ -23,6 +23,7 @@ logger = logging.getLogger("AurisAggregator.pattern")
 
 # Database Connection Settings
 MONGO_URI = (
+    os.getenv('MONGODB_URI') or
     os.getenv('COSMOS_CONNECTION_STRING') or 
     os.getenv('MONGO_URI') or 
     'mongodb://localhost:27017'
@@ -236,11 +237,18 @@ async def main():
         
         now = datetime.now(timezone.utc)
         
-        # Query active factories where status == "live"
-        factories_cursor = db.factory_config.find({"status": "live"})
+        # Get all active stores where plan=factory and status=live
+        stores_cursor = db.stores.find({"plan": "factory", "status": "live"})
         factories = []
-        async for f in factories_cursor:
-            factories.append(f)
+        async for s in stores_cursor:
+            store_id = s.get("store_id")
+            if not store_id:
+                continue
+            factory = await db.factory_config.find_one({"store_id": store_id})
+            if not factory:
+                # Use store doc as fallback
+                factory = s
+            factories.append(factory)
             
         logger.info("Found %d active (live) factories to process", len(factories))
         
@@ -251,13 +259,19 @@ async def main():
                 continue
                 
             # Get active work station zones for this store
-            zones_cursor = db.zone_config.find({
+            zones = await db.zone_config.find({
                 "store_id": store_id,
                 "active": True,
                 "zone_type": "WORK_STATION"
-            })
+            }).to_list(None)
             
-            async for zone in zones_cursor:
+            if not zones:
+                zones = [{
+                    'zone_id': 'default_floor',
+                    'zone_name': 'Factory Floor'
+                }]
+                
+            for zone in zones:
                 zone_id = zone.get("zone_id")
                 if not zone_id:
                     logger.warning("Skipping active zone config missing zone_id for store %s", store_id)

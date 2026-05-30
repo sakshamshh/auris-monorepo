@@ -26,7 +26,7 @@ def require_admin(request: Request):
     try:
         require_admin_token(request)
     except HTTPException:
-        if request.headers.get("X-Admin-Key", "") != (ADMIN_KEY or "auris2026adminkey"):
+        if not ADMIN_KEY or request.headers.get("X-Admin-Key", "") != ADMIN_KEY:
             raise HTTPException(status_code=403, detail="Invalid admin key")
 
 
@@ -45,7 +45,7 @@ async def _cap_collection(name: str):
             await col.delete_one({"_id": oldest["_id"]})
 
 
-async def save_hard_case(store_id: str, camera_id: str, crop_b64: str, confidence: float, frame_id: int):
+async def save_hard_case(store_id: str, camera_id: str, crop_b64: str, bbox: List[float], confidence: float, frame_id: int):
     # Calculate diversity score
     try:
         img_data = base64.b64decode(crop_b64)
@@ -75,6 +75,7 @@ async def save_hard_case(store_id: str, camera_id: str, crop_b64: str, confidenc
         "store_id": store_id,
         "camera_id": camera_id,
         "crop_b64": crop_b64,
+        "bbox": bbox,
         "confidence": confidence,
         "frame_id": frame_id,
         "status": "pending",
@@ -214,7 +215,14 @@ async def export_yolo_dataset(request: Request, store_id: Optional[str] = None):
 
                 # Write label
                 label_filename = f"labels/case_{case_id}.txt"
-                label_content = "0 0.5 0.5 1.0 1.0\n"
+                bbox = case.get("bbox")
+                if bbox and len(bbox) == 4:
+                    x, y, w, h = bbox
+                    cx = x + w / 2
+                    cy = y + h / 2
+                    label_content = f"0 {cx:.6f} {cy:.6f} {w:.6f} {h:.6f}\n"
+                else:
+                    label_content = "0 0.5 0.5 1.0 1.0\n"
                 zip_file.writestr(label_filename, label_content)
 
             # Write dataset.yaml
