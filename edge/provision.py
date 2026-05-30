@@ -154,6 +154,9 @@ def run_provisioning():
             print("✓ Connected to Auris server")
             print(f"Store: {store_name}")
             print(f"Cameras configured: {len(cameras)}")
+            prefill = config.get("prefill")
+            if prefill and prefill.get("wifi_ssid"):
+                print(f"✓ WiFi details saved: {prefill.get('wifi_ssid')}")
             print()
             break
 
@@ -237,9 +240,15 @@ def run_provisioning():
         if potential_cameras:
             # 3c. Ask for camera password
             print(f"Found {len(potential_cameras)} potential cameras on the network")
-            global_entered_pwd = input("Enter DVR/NVR password (same password you use to log into your recorder): ").strip()
-            if not global_entered_pwd:
-                global_entered_pwd = "admin123"
+            prefill = config.get("prefill") if "config" in locals() else None
+            prefill_dvr_pwd = prefill.get("dvr_password") if prefill else None
+            if prefill_dvr_pwd:
+                print("✓ Using saved camera password from client setup")
+                global_entered_pwd = prefill_dvr_pwd
+            else:
+                global_entered_pwd = input("Enter DVR/NVR password (same password you use to log into your recorder): ").strip()
+                if not global_entered_pwd:
+                    global_entered_pwd = "admin123"
 
             # 3d. Test each potential camera with common RTSP patterns
             print("Verifying RTSP feeds using OpenCV video capture...")

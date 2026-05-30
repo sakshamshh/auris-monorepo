@@ -5,7 +5,7 @@ import base64
 import json
 import time
 from datetime import datetime, timezone, timedelta
-from typing import Optional
+from typing import Optional, List
 from collections import defaultdict
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import PlainTextResponse, HTMLResponse
@@ -285,6 +285,7 @@ async def list_stores(request: Request):
             "spatial_status": s.get("spatial_status", "pending"),
             "cameras_count": cameras_count,
             "last_blob": last_blob,
+            "onboarded": s.get("onboarded", False),
         })
     return {"stores": stores}
 
@@ -363,6 +364,20 @@ async def get_store_details(request: Request, store_id: str):
     store = await db.stores.find_one({"store_id": store_id})
     if not store:
         raise HTTPException(status_code=404, detail="Store not found")
+        
+    prefill = None
+    try:
+        config = await db._db.factory_config.find_one({"store_id": store_id})
+        if config and "prefill" in config:
+            prefill = dict(config["prefill"])
+            from utils.crypto import decrypt_string
+            if "dvr_password" in prefill:
+                prefill["dvr_password"] = decrypt_string(prefill["dvr_password"])
+            if "wifi_password" in prefill:
+                prefill["wifi_password"] = decrypt_string(prefill["wifi_password"])
+    except Exception:
+        pass
+
     return {
         "store_id": store["store_id"],
         "store_name": store.get("store_name", store["store_id"]),
@@ -370,6 +385,10 @@ async def get_store_details(request: Request, store_id: str):
         "spatial_status": store.get("spatial_status", "pending"),
         "created_at": store.get("created_at"),
         "ai_instructions": store.get("ai_instructions", ""),
+        "invite_code": store.get("invite_code"),
+        "invite_expiry": store.get("invite_expiry"),
+        "onboarded": store.get("onboarded", False),
+        "prefill": prefill
     }
 
 
@@ -472,6 +491,141 @@ async def update_store_config(request: Request, store_id: str, body: UpdateConfi
     })
     
     return {"status": "updated", "store_id": store_id}
+
+
+class GenerateInviteRequest(BaseModel):
+    store_id: str
+
+
+class CompleteSignupRequest(BaseModel):
+    contact_name: str
+    phone: str
+    email: Optional[str] = ""
+    worker_count: str
+    shift_start: str
+    shift_end: str
+    working_days: List[str]
+    camera_brand: str
+    camera_count: int
+    dvr_password: str
+    wifi_ssid: str
+    wifi_password: str
+    client_password: str
+
+
+@router.post("/admin/invite")
+async def generate_invite(request: Request, body: GenerateInviteRequest):
+    require_admin(request)
+    store = await db.stores.find_one({"store_id": body.store_id})
+    if not store:
+        raise HTTPException(status_code=404, detail="Store not found")
+    
+    import secrets
+    invite_code = f"invite_{secrets.token_urlsafe(16)}"
+    expiry = datetime.now(timezone.utc) + timedelta(days=7)
+    
+    await db.stores.update_one(
+        {"store_id": body.store_id},
+        {"$set": {"invite_code": invite_code, "invite_expiry": expiry.isoformat()}}
+    )
+    
+    signup_url = f"https://auris.skymlabs.com/signup/{invite_code}"
+    return {"invite_code": invite_code, "signup_url": signup_url}
+
+
+@router.get("/signup/{invite_code}")
+async def validate_invite(invite_code: str):
+    store = await db.stores.find_one({"invite_code": invite_code})
+    if not store:
+        return {"valid": False}
+        
+    expiry_str = store.get("invite_expiry")
+    if not expiry_str:
+        return {"valid": False}
+        
+    try:
+        expiry = datetime.fromisoformat(expiry_str)
+        if datetime.now(timezone.utc) > expiry:
+            return {"valid": False}
+    except Exception:
+        return {"valid": False}
+        
+    return {
+        "store_id": store["store_id"],
+        "store_name": store.get("store_name", store["store_id"]),
+        "valid": True
+    }
+
+
+@router.post("/signup/{invite_code}/complete")
+async def complete_signup(invite_code: str, body: CompleteSignupRequest):
+    store = await db.stores.find_one({"invite_code": invite_code})
+    if not store:
+        raise HTTPException(status_code=404, detail="Invalid or expired invite link")
+        
+    expiry_str = store.get("invite_expiry")
+    if not expiry_str:
+        raise HTTPException(status_code=400, detail="Invalid invite link")
+        
+    try:
+        expiry = datetime.fromisoformat(expiry_str)
+        if datetime.now(timezone.utc) > expiry:
+            raise HTTPException(status_code=400, detail="Invite link expired")
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid invite link")
+        
+    store_id = store["store_id"]
+    
+    from utils.crypto import encrypt_string
+    enc_dvr_pwd = encrypt_string(body.dvr_password)
+    enc_wifi_pwd = encrypt_string(body.wifi_password)
+    
+    password_hash = hash_password(body.client_password)
+    
+    await db.stores.update_one(
+        {"store_id": store_id},
+        {
+            "$set": {
+                "contact_name": body.contact_name,
+                "phone": body.phone,
+                "email": body.email,
+                "password_hash": password_hash,
+                "onboarded": True
+            },
+            "$unset": {
+                "invite_code": "",
+                "invite_expiry": ""
+            }
+        }
+    )
+    
+    prefill_data = {
+        "contact_name": body.contact_name,
+        "phone": body.phone,
+        "email": body.email,
+        "worker_count": body.worker_count,
+        "shift_start": body.shift_start,
+        "shift_end": body.shift_end,
+        "working_days": body.working_days,
+        "camera_brand": body.camera_brand,
+        "camera_count": body.camera_count,
+        "dvr_password": enc_dvr_pwd,
+        "wifi_ssid": body.wifi_ssid,
+        "wifi_password": enc_wifi_pwd
+    }
+    
+    await db._db.factory_config.update_one(
+        {"store_id": store_id},
+        {
+            "$set": {
+                "prefill": prefill_data,
+                "updated_at": datetime.now(timezone.utc).isoformat()
+            }
+        },
+        upsert=True
+    )
+    
+    return {"success": True, "message": "Signup completed successfully"}
 
 
 HTML_TEMPLATE = """<!DOCTYPE html>

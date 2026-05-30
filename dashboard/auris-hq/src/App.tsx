@@ -50,6 +50,30 @@ const ClientsTab = () => {
   // Edit Configuration states
   const [editing, setEditing] = useState(false);
   const [editData, setEditData] = useState<any>(null);
+  
+  const [inviteUrl, setInviteUrl] = useState<string>('');
+
+  const handleGenerateInvite = async () => {
+    if (!selectedClient) return;
+    try {
+      const res = await fetchAuth(`${API_BASE}/api/admin/invite`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ store_id: selectedClient.store_id })
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setInviteUrl(data.signup_url);
+        setSelectedClient((prev: any) => ({
+          ...prev,
+          invite_code: data.invite_code,
+          invite_expiry: new Date(Date.now() + 7 * 24 * 3600 * 1000).toISOString()
+        }));
+      }
+    } catch (e) {
+      alert('Failed to generate invite');
+    }
+  };
 
   useEffect(() => {
     fetchAuth(`${API_BASE}/api/admin/stores`)
@@ -127,6 +151,7 @@ const ClientsTab = () => {
               <tr className="border-b border-[#E5E7EB] bg-gray-50/50 sticky top-0">
                 <th className="px-4 py-3 text-xs font-medium text-gray-500 uppercase">Store Name</th>
                 <th className="px-4 py-3 text-xs font-medium text-gray-500 uppercase">Status</th>
+                <th className="px-4 py-3 text-xs font-medium text-gray-500 uppercase">Onboarding</th>
                 <th className="px-4 py-3 text-xs font-medium text-gray-500 uppercase">Plan</th>
                 <th className="px-4 py-3 text-xs font-medium text-gray-500 uppercase">Last Seen</th>
                 <th className="px-4 py-3 text-xs font-medium text-gray-500 uppercase">Cameras</th>
@@ -138,7 +163,17 @@ const ClientsTab = () => {
                 <tr 
                   key={client.store_id} 
                   className={`border-b border-[#E5E7EB] last:border-0 cursor-pointer hover:bg-gray-50 transition-colors ${selectedClient?.store_id === client.store_id ? 'bg-gray-50' : ''}`}
-                  onClick={() => { setSelectedClient(client); setEditing(false); }}
+                  onClick={async () => { 
+                    setEditing(false); 
+                    setSelectedClient(client);
+                    try {
+                      const res = await fetchAuth(`${API_BASE}/api/admin/stores/${client.store_id}`);
+                      if (res.ok) {
+                        const fullData = await res.json();
+                        setSelectedClient(fullData);
+                      }
+                    } catch (e) {}
+                  }}
                 >
                   <td className="px-4 py-4 text-sm font-medium text-[#111827]">{client.store_name}</td>
                   <td className="px-4 py-4">
@@ -146,6 +181,11 @@ const ClientsTab = () => {
                       <div className={`w-2 h-2 rounded-full ${client.status === 'live' ? 'bg-green-500' : 'bg-red-500'}`} />
                       <span className="text-sm text-gray-600 capitalize">{client.status || 'Offline'}</span>
                     </div>
+                  </td>
+                  <td className="px-4 py-4">
+                    <span className={`text-xs px-2 py-1 rounded-md font-medium ${client.onboarded ? 'bg-green-100 text-green-700' : 'bg-yellow-100 text-yellow-700'}`}>
+                      {client.onboarded ? 'Complete ✓' : 'Pending'}
+                    </span>
                   </td>
                   <td className="px-4 py-4">
                     <span className="bg-gray-100 text-gray-700 text-xs px-2 py-1 rounded-md font-medium">{client.plan || 'FACTORY'}</span>
@@ -252,13 +292,48 @@ const ClientsTab = () => {
                     <div><span className="font-medium text-gray-500">Wage:</span> ₹{selectedClient.wage_per_day || 'N/A'} / day</div>
                   </div>
 
-                  <div className="pt-4 border-t border-[#E5E7EB]">
+                  <div className="pt-4 border-t border-[#E5E7EB] space-y-3">
                     <button 
                       onClick={() => { setEditing(true); setEditData(selectedClient); }}
                       className="w-full bg-white border border-gray-300 text-gray-700 px-4 py-2 rounded-lg text-sm font-medium hover:bg-gray-50 transition-colors"
                     >
                       Edit Configuration
                     </button>
+                    
+                    <div className="pt-2">
+                      <label className="text-xs font-medium text-gray-500 uppercase tracking-wider block mb-1">
+                        Self-Signup Status
+                      </label>
+                      <div className="flex items-center justify-between text-sm">
+                        <span className={`px-2 py-0.5 rounded-full text-xs font-semibold ${selectedClient.onboarded ? 'bg-green-100 text-green-800' : 'bg-yellow-100 text-yellow-800'}`}>
+                          {selectedClient.onboarded ? 'Complete ✓' : 'Pending'}
+                        </span>
+                        <button 
+                          onClick={handleGenerateInvite}
+                          className="text-xs font-medium text-[#2563EB] hover:underline"
+                        >
+                          Generate Invite Link
+                        </button>
+                      </div>
+                      
+                      {(selectedClient.invite_code || inviteUrl) && (
+                        <div className="mt-3 p-3 bg-blue-50 border border-blue-100 rounded-lg text-xs space-y-2">
+                          <p className="font-semibold text-blue-800">Copy Signup Link:</p>
+                          <input 
+                            type="text" 
+                            readOnly 
+                            value={inviteUrl || `https://auris.skymlabs.com/signup/${selectedClient.invite_code}`}
+                            onClick={(e) => {
+                              (e.target as HTMLInputElement).select();
+                              navigator.clipboard.writeText((e.target as HTMLInputElement).value);
+                              alert('Link copied to clipboard!');
+                            }}
+                            className="w-full border border-blue-200 bg-white rounded p-1 text-[11px] font-mono cursor-pointer focus:outline-none"
+                          />
+                          <p className="text-[10px] text-blue-600">Expires in 7 days</p>
+                        </div>
+                      )}
+                    </div>
                   </div>
                 </div>
               </>
@@ -539,6 +614,7 @@ const TrainingTab = ({ token }: { token: string }) => {
 const SystemTab = ({ token }: { token: string }) => {
   const [health, setHealth] = useState({ status: 'unknown', db_timeout_count: 0, queue_depth: 0 });
   const [devices, setDevices] = useState<any[]>([]);
+  const [clients, setClients] = useState<any[]>([]);
 
   useEffect(() => {
     fetchAuth(`${API_BASE}/health`)
@@ -551,6 +627,22 @@ const SystemTab = ({ token }: { token: string }) => {
     })
       .then(res => res.json())
       .then(data => setDevices(data.devices || []))
+      .catch(console.error);
+
+    fetchAuth(`${API_BASE}/api/admin/stores`)
+      .then(res => res.json())
+      .then(data => {
+        const stores = data.stores || [];
+        Promise.all(stores.map(async (store: any) => {
+          try {
+            const resDetails = await fetchAuth(`${API_BASE}/api/admin/stores/${store.store_id}`);
+            if (resDetails.ok) {
+              return await resDetails.json();
+            }
+          } catch (e) {}
+          return store;
+        })).then(fullStores => setClients(fullStores));
+      })
       .catch(console.error);
   }, [token]);
 
@@ -584,6 +676,32 @@ const SystemTab = ({ token }: { token: string }) => {
            <Cpu className="text-gray-300" size={32} />
         </Card>
       </div>
+
+      {clients.some(c => c.prefill) && (
+        <Card className="p-5">
+          <h3 className="text-sm font-semibold text-gray-700 mb-4">Pre-installation Onboarding Readiness</h3>
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            {clients.filter(c => c.prefill).map(client => (
+              <div key={client.store_id} className="border border-green-200 bg-green-50/50 rounded-xl p-4 space-y-2">
+                <div className="flex justify-between items-start">
+                  <h4 className="font-semibold text-gray-900 text-sm">{client.store_name}</h4>
+                  <span className="text-[10px] bg-green-100 text-green-800 font-bold px-2 py-0.5 rounded-full uppercase">
+                    Pre-install data received ✓
+                  </span>
+                </div>
+                <div className="text-xs text-gray-600 space-y-1 pt-1">
+                  <div><span className="font-medium text-gray-500">Camera Brand:</span> {client.prefill.camera_brand}</div>
+                  <div><span className="font-medium text-gray-500">Camera Count:</span> {client.prefill.camera_count}</div>
+                  <div><span className="font-medium text-gray-500">WiFi SSID:</span> {client.prefill.wifi_ssid}</div>
+                  <div className="pt-2 text-[10px] font-bold text-green-700 uppercase tracking-wider">
+                    Ready for Auris edge provisioning ✓
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </Card>
+      )}
 
       <Card className="flex-1 overflow-y-auto">
         <div className="p-4 border-b border-[#E5E7EB] bg-gray-50/50 sticky top-0">

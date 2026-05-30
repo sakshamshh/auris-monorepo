@@ -492,7 +492,18 @@ async def get_edge_config(request: Request):
                 {"store_id": store_id},
                 {"$set": {"privacy_mode": is_hosp}}
             )
-        
+    if "prefill" in config and config["prefill"]:
+        try:
+            from utils.crypto import decrypt_string
+            prefill_copy = dict(config["prefill"])
+            if "dvr_password" in prefill_copy:
+                prefill_copy["dvr_password"] = decrypt_string(prefill_copy["dvr_password"])
+            if "wifi_password" in prefill_copy:
+                prefill_copy["wifi_password"] = decrypt_string(prefill_copy["wifi_password"])
+            config["prefill"] = prefill_copy
+        except Exception as e:
+            logger.error("Failed to decrypt prefill for store %s: %s", store_id, e)
+
     # Convert MongoDB _id for JSON serialization
     if "_id" in config:
         config["_id"] = str(config["_id"])

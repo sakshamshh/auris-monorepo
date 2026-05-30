@@ -4,6 +4,7 @@ import { getSavedCredentials, logout, fetchLive, fetchFactoryCameras } from "./s
 
 import LoginScreen from "./src/screens/LoginScreen";
 import AdminScreen from "./src/screens/AdminScreen";
+import SignupWizard from "./src/screens/SignupWizard";
 
 // New Factory Screens
 import FactoryMapScreen from "./src/screens/FactoryMapScreen";
@@ -17,9 +18,26 @@ export default function App() {
   const [tab, setTab]           = useState("map");
   const [showAdmin, setShowAdmin] = useState(false);
   const [cameraCount, setCameraCount] = useState(null);
+  
+  // Self-signup states
+  const [inviteCode, setInviteCode] = useState(null);
+  const [isSignupMode, setIsSignupMode] = useState(false);
 
   useEffect(() => {
     (async () => {
+      // Check for deep signup URL on Web platform
+      if (Platform.OS === "web") {
+        const path = window.location.pathname;
+        if (path.startsWith("/signup/")) {
+          const code = path.substring(8).trim();
+          if (code) {
+            setInviteCode(code);
+            setIsSignupMode(true);
+            setChecking(false);
+            return;
+          }
+        }
+      }
       const creds = await getSavedCredentials();
       if (creds) setStore(creds);
       setChecking(false);
@@ -58,6 +76,16 @@ export default function App() {
       <ActivityIndicator size="large" color="#1A3C5E" />
     </View>
   );
+
+  if (isSignupMode && inviteCode) {
+    return <SignupWizard inviteCode={inviteCode} onGoToLogin={() => {
+      setIsSignupMode(false);
+      setInviteCode(null);
+      if (Platform.OS === "web") {
+        window.history.pushState({}, "", "/");
+      }
+    }} />;
+  }
 
   if (showAdmin) {
     return <AdminScreen onBack={() => setShowAdmin(false)} />;
