@@ -24,6 +24,8 @@ scp -i ~/.ssh/id_rsa server/routes/*.py saksham@34.131.253.189:/home/retailiq-ke
 scp -i ~/.ssh/id_rsa server/aggregator/*.py saksham@34.131.253.189:/home/retailiq-key/auris-server/aggregator/
 scp -i ~/.ssh/id_rsa server/main.py saksham@34.131.253.189:/home/retailiq-key/auris-server/
 scp -i ~/.ssh/id_rsa server/db.py saksham@34.131.253.189:/home/retailiq-key/auris-server/
+ssh -i ~/.ssh/id_rsa saksham@34.131.253.189 "mkdir -p /home/retailiq-key/auris-server/utils"
+scp -i ~/.ssh/id_rsa server/utils/*.py saksham@34.131.253.189:/home/retailiq-key/auris-server/utils/
 # yolov8s.onnx lives on the server (generated once via `yolo export`), not deployed from local
 ssh -i ~/.ssh/id_rsa saksham@34.131.253.189 "mkdir -p /home/retailiq-key/auris-server/scripts"
 scp -i ~/.ssh/id_rsa server/scripts/export_and_train.sh saksham@34.131.253.189:/home/retailiq-key/auris-server/scripts/
