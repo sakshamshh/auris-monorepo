@@ -644,6 +644,8 @@ async def complete_signup(invite_code: str, body: CompleteSignupRequest):
         upsert=True
     )
     
+    logger.info(f"Saving prefill for store {store_id}: dvr_password={'***' if body.dvr_password else 'None'}")
+    
     return {"success": True, "message": "Signup completed successfully"}
 
 

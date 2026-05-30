@@ -105,6 +105,7 @@ def run_provisioning():
     print("           AURIS EDGE PROVISIONING WIZARD         ")
     print("==================================================")
     print()
+    config = None
 
     # --------------------------------------------------------------------------
     # STEP 1 — Enter API Key & STEP 2 — Fetch config from server
@@ -240,13 +241,13 @@ def run_provisioning():
         if potential_cameras:
             # 3c. Ask for camera password
             print(f"Found {len(potential_cameras)} potential cameras on the network")
-            prefill = config.get("prefill") if "config" in locals() else None
+            prefill = config.get("prefill") if config else None
             prefill_dvr_pwd = prefill.get("dvr_password") if prefill else None
             if prefill_dvr_pwd:
-                print("✓ Using saved camera password from client setup")
+                print("✓ Using saved camera password from client setup form")
                 global_entered_pwd = prefill_dvr_pwd
             else:
-                global_entered_pwd = input("Enter DVR/NVR password (same password you use to log into your recorder): ").strip()
+                global_entered_pwd = input("Enter DVR/NVR password (press Enter to try 'admin123'): ").strip()
                 if not global_entered_pwd:
                     global_entered_pwd = "admin123"
 
