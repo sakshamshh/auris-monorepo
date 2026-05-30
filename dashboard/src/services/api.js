@@ -3,6 +3,7 @@ import { Platform } from 'react-native';
 import * as SecureStore from 'expo-secure-store';
 
 const BASE_URL = 'https://auris.skymlabs.com';
+export const API_BASE = BASE_URL;
 const api = axios.create({ baseURL: BASE_URL });
 
 const storage = {
