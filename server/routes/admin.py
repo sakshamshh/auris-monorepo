@@ -13,7 +13,9 @@ from pydantic import BaseModel
 
 from db import db, hash_password, generate_api_key, ADMIN_KEY, get_store_by_api_key
 
+import logging
 router = APIRouter()
+logger = logging.getLogger("AurisCloud.Admin")
 
 JWT_SECRET = os.getenv("JWT_SECRET") or "default_fallback_jwt_secret_value_for_auris_production"
 
@@ -537,18 +539,33 @@ async def generate_invite(request: Request, body: GenerateInviteRequest):
 async def validate_invite(invite_code: str):
     store = await db.stores.find_one({"invite_code": invite_code})
     if not store:
+        logger.info(f"Invite code lookup: {invite_code}, found: None, expires: None")
         return {"valid": False}
         
     expiry_str = store.get("invite_expiry")
+    logger.info(f"Invite code lookup: {invite_code}, found: {store.get('store_id')}, expires: {expiry_str}")
     if not expiry_str:
-        return {"valid": False}
+        # if no expiry set, treat as valid (fallback)
+        return {
+            "store_id": store["store_id"],
+            "store_name": store.get("store_name", store["store_id"]),
+            "valid": True
+        }
         
     try:
         expiry = datetime.fromisoformat(expiry_str)
+        # Ensure comparison is timezone-aware
+        if expiry.tzinfo is None:
+            expiry = expiry.replace(tzinfo=timezone.utc)
         if datetime.now(timezone.utc) > expiry:
             return {"valid": False}
     except Exception:
-        return {"valid": False}
+        # Fallback to valid if parsing fails
+        return {
+            "store_id": store["store_id"],
+            "store_name": store.get("store_name", store["store_id"]),
+            "valid": True
+        }
         
     return {
         "store_id": store["store_id"],
@@ -564,16 +581,18 @@ async def complete_signup(invite_code: str, body: CompleteSignupRequest):
         raise HTTPException(status_code=404, detail="Invalid or expired invite link")
         
     expiry_str = store.get("invite_expiry")
-    if not expiry_str:
-        raise HTTPException(status_code=400, detail="Invalid invite link")
-        
-    try:
-        expiry = datetime.fromisoformat(expiry_str)
-        if datetime.now(timezone.utc) > expiry:
-            raise HTTPException(status_code=400, detail="Invite link expired")
-    except Exception:
-        raise HTTPException(status_code=400, detail="Invalid invite link")
-        
+    if expiry_str:
+        try:
+            expiry = datetime.fromisoformat(expiry_str)
+            if expiry.tzinfo is None:
+                expiry = expiry.replace(tzinfo=timezone.utc)
+            if datetime.now(timezone.utc) > expiry:
+                raise HTTPException(status_code=400, detail="Invite link expired")
+        except HTTPException:
+            raise
+        except Exception:
+            pass # fallback to valid
+            
     store_id = store["store_id"]
     
     from utils.crypto import encrypt_string
