@@ -494,12 +494,27 @@ async def get_edge_config(request: Request):
             )
     if "prefill" in config and config["prefill"]:
         try:
+            import base64
             from utils.crypto import decrypt_string
             prefill_copy = dict(config["prefill"])
             if "dvr_password" in prefill_copy:
-                prefill_copy["dvr_password"] = decrypt_string(prefill_copy["dvr_password"])
+                try:
+                    # Try custom XOR decryption first
+                    prefill_copy["dvr_password"] = decrypt_string(prefill_copy["dvr_password"])
+                except Exception:
+                    # Fallback to standard base64 decode if it was stored raw base64
+                    try:
+                        prefill_copy["dvr_password"] = base64.b64decode(prefill_copy["dvr_password"]).decode()
+                    except Exception:
+                        pass
             if "wifi_password" in prefill_copy:
-                prefill_copy["wifi_password"] = decrypt_string(prefill_copy["wifi_password"])
+                try:
+                    prefill_copy["wifi_password"] = decrypt_string(prefill_copy["wifi_password"])
+                except Exception:
+                    try:
+                        prefill_copy["wifi_password"] = base64.b64decode(prefill_copy["wifi_password"]).decode()
+                    except Exception:
+                        pass
             config["prefill"] = prefill_copy
         except Exception as e:
             logger.error("Failed to decrypt prefill for store %s: %s", store_id, e)
