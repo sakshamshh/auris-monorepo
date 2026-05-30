@@ -86,6 +86,16 @@ def get_local_ip():
         s.close()
     return ip
 
+def get_camera_brand(url, ip):
+    url_lower = url.lower()
+    if "streaming" in url_lower:
+        return "Hikvision"
+    elif "live/channel" in url_lower or "stream" in url_lower:
+        return "CPPlus"
+    elif "realmonitor" in url_lower:
+        return "Dahua"
+    return "CPPlus" # default to CPPlus
+
 # ------------------------------------------------------------------------------
 # INTERACTIVE STEPS
 # ------------------------------------------------------------------------------
@@ -105,7 +115,7 @@ def run_provisioning():
     print()
 
     while True:
-        api_key = input("Enter API Key: ").strip()
+        api_key = input("Enter API Key (from HQ → Clients → [Client Name] → System tab): ").strip()
 
         # Validate format
         if not api_key.startswith("sk_") or len(api_key) < 10:
@@ -227,54 +237,74 @@ def run_provisioning():
         if potential_cameras:
             # 3c. Ask for camera password
             print(f"Found {len(potential_cameras)} potential cameras on the network")
-            entered_pwd = input("Enter camera password (press Enter to try 'admin123'): ").strip()
-            if not entered_pwd:
-                entered_pwd = "admin123"
-
-            # Create unique passwords list to try
-            passwords_to_try = []
-            for p in [entered_pwd, "admin", "password", "12345", ""]:
-                if p not in passwords_to_try:
-                    passwords_to_try.append(p)
+            global_entered_pwd = input("Enter DVR/NVR password (same password you use to log into your recorder): ").strip()
+            if not global_entered_pwd:
+                global_entered_pwd = "admin123"
 
             # 3d. Test each potential camera with common RTSP patterns
             print("Verifying RTSP feeds using OpenCV video capture...")
             
-            for ip, port in potential_cameras:
+            for idx, (ip, port) in enumerate(potential_cameras, 1):
                 found_working_for_ip = False
-                for password in passwords_to_try:
+                attempts = 0
+                entered_pwd = global_entered_pwd
+                
+                while attempts < 3:
+                    # Connection feedback: While trying RTSP patterns show "Connecting to 192.168.1.15..."
+                    print(f"Connecting to {ip}...")
+                    
+                    # Create unique passwords list to try
+                    passwords_to_try = []
+                    for p in [entered_pwd, "admin", "password", "12345", ""]:
+                        if p not in passwords_to_try:
+                            passwords_to_try.append(p)
+                    
+                    for password in passwords_to_try:
+                        if found_working_for_ip:
+                            break
+                        
+                        # Patterns to try
+                        patterns = [
+                            f"rtsp://admin:{password}@{ip}:{port}/live/channel0",
+                            f"rtsp://admin:{password}@{ip}:{port}/avstream/channel=1",
+                            f"rtsp://admin:{password}@{ip}:{port}/Streaming/Channels/101",
+                            f"rtsp://admin:{password}@{ip}:{port}/stream1",
+                            f"rtsp://admin:{password}@{ip}:{port}/onvif1",
+                            f"rtsp://admin:{password}@{ip}:{port}/h264/ch1/main/av_stream"
+                        ]
+
+                        for url in patterns:
+                            # Handle blank password by trying without credentials
+                            if password == "":
+                                url = url.replace("admin:@", "")
+                            
+                            try:
+                                cap = cv2.VideoCapture(url)
+                                cap.set(cv2.CAP_PROP_OPEN_TIMEOUT_MSEC, 3000) # 3 seconds timeout
+                                ret, frame = cap.read()
+                                
+                                if ret and frame is not None:
+                                    working_cameras.append((ip, port, url))
+                                    brand = get_camera_brand(url, ip)
+                                    print(f"✓ Camera {idx} connected — {brand} — {ip}")
+                                    found_working_for_ip = True
+                                    cap.release()
+                                    break
+                                cap.release()
+                            except Exception as e:
+                                if "--verbose" in sys.argv:
+                                    print(f"Error testing {url}: {e}")
+                                cap.release()
+                                
                     if found_working_for_ip:
                         break
-                    
-                    # Patterns to try
-                    patterns = [
-                        f"rtsp://admin:{password}@{ip}:{port}/live/channel0",
-                        f"rtsp://admin:{password}@{ip}:{port}/avstream/channel=1",
-                        f"rtsp://admin:{password}@{ip}:{port}/Streaming/Channels/101",
-                        f"rtsp://admin:{password}@{ip}:{port}/stream1",
-                        f"rtsp://admin:{password}@{ip}:{port}/onvif1",
-                        f"rtsp://admin:{password}@{ip}:{port}/h264/ch1/main/av_stream"
-                    ]
-
-                    for url in patterns:
-                        # Handle blank password by trying without credentials
-                        if password == "":
-                            url = url.replace("admin:@", "")
                         
-                        cap = cv2.VideoCapture(url)
-                        cap.set(cv2.CAP_PROP_OPEN_TIMEOUT_MSEC, 3000) # 3 seconds timeout
-                        ret, frame = cap.read()
-                        
-                        if ret and frame is not None:
-                            working_cameras.append((ip, port, url))
-                            print(f"✓ Camera found: {ip}:{port} — {url}")
-                            found_working_for_ip = True
-                            cap.release()
-                            break
-                        cap.release()
-
-                if not found_working_for_ip:
-                    print(f"✗ {ip} — no working stream found")
+                    attempts += 1
+                    if attempts < 3:
+                        entered_pwd = input(f"Wrong password — please try again (attempt {attempts}/3): ").strip()
+                    else:
+                        print(f"✗ Could not connect to {ip} — check password and try again")
+                        print(f"Could not connect to camera at {ip}. Skipping.")
 
         # 3e. If no cameras found automatically
         if not working_cameras:
@@ -293,8 +323,12 @@ def run_provisioning():
             print()
             print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
             print(f"Found {len(working_cameras)} working cameras:")
-            for idx, (_, _, url) in enumerate(working_cameras, 1):
-                print(f"  cam{idx}: {url}")
+            for idx, (ip, port, url) in enumerate(working_cameras, 1):
+                brand = get_camera_brand(url, ip)
+                if "--verbose" in sys.argv:
+                    print(f"  cam{idx}: {url}")
+                else:
+                    print(f"  Camera {idx} — {brand} — Connected ✓")
             print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
             print()
 
@@ -428,10 +462,24 @@ def run_provisioning():
     # --------------------------------------------------------------------------
     total_cameras = len(cameras) if cameras else len(working_cameras)
     print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-    print(f"Auris Edge is configured and ready with {total_cameras} cameras.")
-    print("Run edge_worker.py to start streaming.")
-    print("Or if using systemd: sudo systemctl start auris-edge")
+    print("Setup complete!")
+    print(f"Connected cameras: {total_cameras}")
+    if cameras:
+        for idx, cam in enumerate(cameras, 1):
+            cam_id = cam.get("camera_id", f"cam{idx}")
+            rtsp = cam.get("rtsp_url", "")
+            import re
+            ip_match = re.search(r'@([^:/]+)', rtsp)
+            ip = ip_match.group(1) if ip_match else "unknown"
+            brand = "CPPlus"
+            print(f"  ✓ {cam_id} — {ip} ({brand})")
+    else:
+        for idx, (ip, port, url) in enumerate(working_cameras, 1):
+            brand = get_camera_brand(url, ip)
+            print(f"  ✓ cam{idx} — {ip} ({brand})")
+    print("Saved to Auris cloud.")
     print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+    print("Run: sudo systemctl start auris-edge")
     print()
 
 if __name__ == "__main__":
