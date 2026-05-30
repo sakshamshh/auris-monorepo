@@ -221,7 +221,21 @@ async def update_factory_cameras(request: Request, body: CamerasUpdateRequest):
     Requires admin key.
     """
     admin_key = request.headers.get("X-Admin-Key", "")
-    if admin_key != "auris2026adminkey":
+    api_key = request.headers.get("X-API-Key", "")
+    
+    authorized = False
+    if admin_key == "auris2026adminkey":
+        authorized = True
+    elif api_key:
+        try:
+            from db import get_store_by_api_key
+            store = await get_store_by_api_key(api_key)
+            if store and store.get("store_id") == body.store_id:
+                authorized = True
+        except Exception as e:
+            logger.error("Error during API key validation in onboarding: %s", e)
+            
+    if not authorized:
         logger.warning("Admin authorization failed for camera update")
         raise HTTPException(status_code=401, detail="Unauthorized")
         

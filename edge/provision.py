@@ -65,7 +65,7 @@ SERVER_URL = "https://auris.skymlabs.com"
 CONFIG_ENDPOINT = f"{SERVER_URL}/api/edge/config"
 FRAMES_ENDPOINT = f"{SERVER_URL}/api/frames"
 CAMERAS_UPDATE_ENDPOINT = f"{SERVER_URL}/api/factory/cameras/update"
-ADMIN_KEY = "auris2026adminkey"
+ADMIN_KEY = os.getenv("ADMIN_KEY") or "auris2026adminkey"
 
 # ------------------------------------------------------------------------------
 # HELPER FUNCTIONS
@@ -351,9 +351,13 @@ def run_provisioning():
                     "cameras": cams_payload
                 }
                 req_headers = {
-                    "X-Admin-Key": ADMIN_KEY,
                     "Content-Type": "application/json"
                 }
+                env_admin_key = os.getenv("ADMIN_KEY")
+                if env_admin_key:
+                    req_headers["X-Admin-Key"] = env_admin_key
+                else:
+                    req_headers["X-API-Key"] = api_key
 
                 try:
                     res = requests.post(CAMERAS_UPDATE_ENDPOINT, json=req_body, headers=req_headers, timeout=10)
