@@ -90,37 +90,17 @@ function MainTabs({ store, onLogout }) {
 }
 
 export default function App() {
-  const [store, setStore] = useState(null);
-  const [checking, setChecking] = useState(true);
-
-  useEffect(() => {
-    (async () => {
-      const creds = await getSavedCredentials();
-      if (creds) setStore(creds);
-      setChecking(false);
-    })();
-  }, []);
-
-  const handleLogin = (data, password) => {
-    setStore({ ...data, password });
-  };
+  const [store, setStore] = useState({
+    store_id: 'home_test_2',
+    store_name: 'Home Test 2',
+    password: 'auris123'
+  });
 
   const handleLogout = async () => {
-    await logout();
-    setStore(null);
+    // No-op since there's no login screen
   };
 
-  if (checking) {
-    return (
-      <View style={styles.loadingContainer}>
-        <ActivityIndicator size="large" color="#111111" />
-      </View>
-    );
-  }
-
-  if (!store) {
-    return <LoginScreen onLogin={handleLogin} />;
-  }
+  if (!store) return null;
 
   return (
     <SafeAreaView style={styles.safeArea}>

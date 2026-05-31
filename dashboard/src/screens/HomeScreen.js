@@ -5,34 +5,29 @@ import { fetchDeadtime, fetchFactoryCameras } from '../services/api';
 
 const screenWidth = Dimensions.get('window').width;
 
-const CustomBarChart = () => {
-  // Hardcoded for presentation/demo to match exact specs if real data isn't perfectly distributed
-  const data = [
-    { day: 'Mon', thisWeek: 12000, lastWeek: 9000 },
-    { day: 'Tue', thisWeek: 15000, lastWeek: 16000 },
-    { day: 'Wed', thisWeek: 8000, lastWeek: 12000 },
-    { day: 'Thu', thisWeek: 21000, lastWeek: 19000 },
-    { day: 'Fri', thisWeek: 18000, lastWeek: 15000 },
-    { day: 'Sat', thisWeek: 5000, lastWeek: 4000 },
-    { day: 'Sun', thisWeek: 0, lastWeek: 0 },
-  ];
+const CustomBarChart = ({ dailyTrend }) => {
+  // Extract last 7 days of data.
+  // We don't have "last week" data from the current API response format in daily_trend, 
+  // so we'll just plot the current week and leave last week as 0 to avoid faking data.
+  const data = dailyTrend ? dailyTrend.map(d => {
+    const day = new Date(d.date).toLocaleDateString('en-US', { weekday: 'short' });
+    return { day, thisWeek: d.cost || 0, lastWeek: 0 };
+  }) : [];
 
   const chartHeight = 180;
   const paddingVertical = 20;
-  const maxVal = 25000; 
-  const yLabels = [0, 5000, 10000, 15000, 20000, 25000];
+  const maxVal = Math.max(...data.map(d => d.thisWeek), 5000); 
+  const yLabels = [0, maxVal * 0.25, maxVal * 0.5, maxVal * 0.75, maxVal];
 
   const getBarHeight = (val) => ((val / maxVal) * (chartHeight - paddingVertical * 2));
   
-  // Calculate layout
   const innerWidth = screenWidth > 768 ? 1200 : screenWidth - 80;
-  const groupWidth = innerWidth / 7;
+  const groupWidth = innerWidth / Math.max(data.length, 1);
   const barWidth = 12;
   const gap = 4;
 
   return (
     <View style={styles.chartWrapper}>
-      {/* Legend */}
       <View style={styles.legendContainer}>
         <View style={styles.legendItem}>
           <View style={[styles.legendBox, { backgroundColor: '#111111' }]} />
@@ -45,20 +40,18 @@ const CustomBarChart = () => {
       </View>
 
       <Svg width="100%" height={chartHeight}>
-        {/* Gridlines */}
         {yLabels.map((val, i) => {
           const y = chartHeight - paddingVertical - ((val / maxVal) * (chartHeight - paddingVertical * 2));
           return (
             <React.Fragment key={`grid-${i}`}>
               <Line x1="40" y1={y} x2="100%" y2={y} stroke="#F5F5F5" strokeWidth="1" />
               <SvgText x="30" y={y + 4} fontSize="11" fill="#BBBBBB" textAnchor="end">
-                {val === 0 ? '0' : `${val / 1000}k`}
+                {val === 0 ? '0' : `${Math.round(val / 1000)}k`}
               </SvgText>
             </React.Fragment>
           );
         })}
 
-        {/* Bars */}
         {data.map((d, i) => {
           const xGroup = 40 + i * groupWidth + (groupWidth / 2) - barWidth - (gap / 2);
           const yThisWeek = chartHeight - paddingVertical - getBarHeight(d.thisWeek);
@@ -68,7 +61,6 @@ const CustomBarChart = () => {
             <React.Fragment key={`group-${i}`}>
               <Rect x={xGroup} y={yThisWeek} width={barWidth} height={getBarHeight(d.thisWeek)} fill="#111111" rx="3" ry="3" />
               <Rect x={xGroup + barWidth + gap} y={yLastWeek} width={barWidth} height={getBarHeight(d.lastWeek)} fill="#EFEFEF" rx="3" ry="3" />
-              
               <SvgText x={40 + i * groupWidth + (groupWidth / 2)} y={chartHeight} fontSize="11" fill="#BBBBBB" textAnchor="middle">
                 {d.day}
               </SvgText>
@@ -93,17 +85,15 @@ export default function HomeScreen({ store }) {
         const res = await fetchDeadtime(store.store_id, store.password, from, to);
         setData(res);
         const camRes = await fetchFactoryCameras(store.store_id, store.password);
-        // Map cameras for UI
-        const mappedCams = [
-          { name: 'CAM-01', status: 'Offline' },
-          { name: 'CAM-02', status: 'Active' },
-          { name: 'CAM-03', status: 'Active' },
-          { name: 'CAM-04', status: 'Warning' },
-          { name: 'CAM-05', status: 'Active' }
-        ];
+        
+        // Use real count, mock names as API only returns `total_online`
+        const onlineCount = camRes?.total_online || 0;
+        const mappedCams = Array.from({ length: Math.max(onlineCount, 1) }, (_, i) => ({
+          name: `CAM-0${i + 1}`,
+          status: i < onlineCount ? 'Active' : 'Offline'
+        }));
         setCameras(mappedCams);
       } catch (e) {
-        // Handle error implicitly
       } finally {
         setLoading(false);
       }
@@ -112,8 +102,13 @@ export default function HomeScreen({ store }) {
 
   const fmtRs = (n) => `₹${Number(n || 0).toLocaleString('en-IN')}`;
 
-  const todayCost = data?.summary?.today_cost_inr || 42500;
-  const deadHours = data?.summary?.dead_hours_total || 4.2;
+  const todayCost = data?.summary?.today_cost_inr || 0;
+  const deadHours = data?.summary?.dead_hours_total || 0;
+  const worstZone = data?.worst_zone || "No deadtime detected";
+  
+  // Clean narrative string (strip markdown)
+  const rawNarrative = data?.narrative || "System operating normally. No major insights to report.";
+  const narrative = rawNarrative.replace(/\*\*[^*]+\*\*/g, '').replace(/#/g, '').trim();
 
   return (
     <ScrollView style={styles.container} contentContainerStyle={styles.content}>
@@ -137,8 +132,8 @@ export default function HomeScreen({ store }) {
       {/* Card 2: Worst Zone */}
       <View style={styles.card}>
         <Text style={styles.sectionLabel}>WORST PERFORMING ZONE</Text>
-        <Text style={styles.zoneName}>Assembly Line B</Text>
-        <Text style={styles.reasonText}>Conveyor jam detected. Sustained micro-stoppages exceeding threshold.</Text>
+        <Text style={styles.zoneName}>{worstZone}</Text>
+        <Text style={styles.reasonText}>Highest idle time contributor for this period.</Text>
         <TouchableOpacity style={styles.textLinkWrapper}>
           <Text style={styles.textLink}>View in Stats →</Text>
         </TouchableOpacity>
@@ -147,15 +142,13 @@ export default function HomeScreen({ store }) {
       {/* Card 3: Trend */}
       <View style={styles.card}>
         <Text style={styles.sectionLabel}>DEAD COST — THIS WEEK VS LAST WEEK</Text>
-        <CustomBarChart />
+        <CustomBarChart dailyTrend={data?.daily_trend} />
       </View>
 
       {/* Card 4: System Insights */}
       <View style={styles.card}>
         <Text style={styles.sectionLabel}>SYSTEM INSIGHTS</Text>
-        <Text style={styles.insightText}>
-          Productivity has dropped 12% in the last 4 hours, primarily driven by Zone C. Feeder mechanism inspection is recommended before the next shift.
-        </Text>
+        <Text style={styles.insightText}>{narrative}</Text>
       </View>
 
       {/* Card 5: Camera Status */}

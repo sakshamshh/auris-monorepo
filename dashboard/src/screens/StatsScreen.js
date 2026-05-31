@@ -1,23 +1,19 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Dimensions, Platform } from 'react-native';
 import Svg, { Rect, Line, Text as SvgText } from 'react-native-svg';
+import { fetchDeadtime, fetchBottleneck, fetchPatterns } from '../services/api';
 
 const screenWidth = Dimensions.get('window').width;
 
-const CustomBarChart = () => {
-  const data = [
-    { day: 'Mon', thisWeek: 12000, lastWeek: 9000 },
-    { day: 'Tue', thisWeek: 15000, lastWeek: 16000 },
-    { day: 'Wed', thisWeek: 8000, lastWeek: 12000 },
-    { day: 'Thu', thisWeek: 21000, lastWeek: 19000 },
-    { day: 'Fri', thisWeek: 18000, lastWeek: 15000 },
-    { day: 'Sat', thisWeek: 5000, lastWeek: 4000 },
-    { day: 'Sun', thisWeek: 0, lastWeek: 0 },
-  ];
+const CustomBarChart = ({ dailyTrend }) => {
+  const data = dailyTrend ? dailyTrend.map(d => {
+    const day = new Date(d.date).toLocaleDateString('en-US', { weekday: 'short' });
+    return { day, thisWeek: d.cost || 0, lastWeek: 0 };
+  }) : [];
 
   const chartHeight = 220; // taller than home
   const paddingVertical = 20;
-  const maxVal = 25000; 
+  const maxVal = Math.max(...data.map(d => d.thisWeek), 5000); 
   const yLabels = [0, 5000, 10000, 15000, 20000, 25000];
   const getBarHeight = (val) => ((val / maxVal) * (chartHeight - paddingVertical * 2));
   
@@ -120,6 +116,32 @@ const CustomHeatmap = () => {
 
 export default function StatsScreen({ store }) {
   const [range, setRange] = useState('This Week');
+  const [data, setData] = useState(null);
+  const [bottlenecks, setBottlenecks] = useState([]);
+  const [patterns, setPatterns] = useState([]);
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const to = new Date().toISOString();
+        const from = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
+        const [dead, bottle, patt] = await Promise.all([
+          fetchDeadtime(store.store_id, store.password, from, to),
+          fetchBottleneck(store.store_id, store.password),
+          fetchPatterns(store.store_id, store.password)
+        ]);
+        setData(dead);
+        setBottlenecks(bottle?.ranked_stations || []);
+        setPatterns(patt?.patterns || []);
+      } catch (e) {
+      }
+    })();
+  }, [store]);
+
+  const fmtRs = (n) => `₹${Number(n || 0).toLocaleString('en-IN')}`;
+  const totalIdleCost = data?.summary?.month_cost_inr || 0;
+  const estimatedSavings = totalIdleCost * 0.75;
+  const byZone = data?.by_zone || [];
 
   return (
     <ScrollView style={styles.container} contentContainerStyle={styles.content}>
@@ -148,13 +170,13 @@ export default function StatsScreen({ store }) {
         <View style={{ flexDirection: 'row' }}>
           <View style={{ flex: 1, paddingRight: 20 }}>
             <Text style={styles.sectionLabel}>TOTAL IDLE COST IDENTIFIED</Text>
-            <Text style={[styles.bigNumber, { color: '#C0392B' }]}>₹3,42,000</Text>
-            <Text style={styles.subText}>Since installation · 14 Mar 2026</Text>
+            <Text style={[styles.bigNumber, { color: '#C0392B' }]}>{fmtRs(totalIdleCost)}</Text>
+            <Text style={styles.subText}>Since installation</Text>
           </View>
           <View style={{ width: 1, backgroundColor: '#EFEFEF', marginVertical: 10 }} />
           <View style={{ flex: 1, paddingLeft: 20 }}>
             <Text style={styles.sectionLabel}>YOUR ESTIMATED SAVINGS</Text>
-            <Text style={[styles.bigNumber, { color: '#1A7F4B' }]}>₹2,56,500</Text>
+            <Text style={[styles.bigNumber, { color: '#1A7F4B' }]}>{fmtRs(estimatedSavings)}</Text>
             <Text style={styles.subText}>75% of identified losses retained</Text>
           </View>
         </View>
@@ -174,37 +196,19 @@ export default function StatsScreen({ store }) {
             <Text style={[styles.th, { flex: 1, textAlign: 'right' }]}>vs Last Week</Text>
           </View>
           
-          <View style={[styles.tr, { backgroundColor: '#FFFFFF' }]}>
-            <Text style={[styles.td, { flex: 2 }]}>Assembly Line B</Text>
-            <View style={[styles.td, { flex: 1 }]}><View style={[styles.statusPill, { backgroundColor: '#FFF5F5' }]}><Text style={[styles.statusText, { color: '#C0392B' }]}>Critical</Text></View></View>
-            <Text style={[styles.td, { flex: 1, textAlign: 'right' }]}>12.4</Text>
-            <Text style={[styles.td, { flex: 1, textAlign: 'right', color: '#C0392B', fontWeight: '600' }]}>₹18,500</Text>
-            <Text style={[styles.td, { flex: 1, textAlign: 'right', color: '#C0392B' }]}>↑ 12%</Text>
-          </View>
+          {byZone.map((z, i) => (
+            <View key={i} style={[styles.tr, { backgroundColor: i % 2 === 0 ? '#FFFFFF' : '#F9F9F9' }]}>
+              <Text style={[styles.td, { flex: 2 }]}>{z.zone_label || z.zone_id}</Text>
+              <View style={[styles.td, { flex: 1 }]}>
+                <View style={[styles.statusPill, { backgroundColor: '#F0FBF5' }]}><Text style={[styles.statusText, { color: '#1A7F4B' }]}>Active</Text></View>
+              </View>
+              <Text style={[styles.td, { flex: 1, textAlign: 'right' }]}>{Number(z.dead_hours).toFixed(1)}</Text>
+              <Text style={[styles.td, { flex: 1, textAlign: 'right', color: '#C0392B', fontWeight: '600' }]}>{fmtRs(z.dead_cost_inr)}</Text>
+              <Text style={[styles.td, { flex: 1, textAlign: 'right', color: '#888888' }]}>-</Text>
+            </View>
+          ))}
+          {byZone.length === 0 && <Text style={{ padding: 20, color: '#888888' }}>No data</Text>}
           
-          <View style={[styles.tr, { backgroundColor: '#F9F9F9' }]}>
-            <Text style={[styles.td, { flex: 2 }]}>Packaging Area</Text>
-            <View style={[styles.td, { flex: 1 }]}><View style={[styles.statusPill, { backgroundColor: '#FFF8F0' }]}><Text style={[styles.statusText, { color: '#E07B00' }]}>At Risk</Text></View></View>
-            <Text style={[styles.td, { flex: 1, textAlign: 'right' }]}>8.2</Text>
-            <Text style={[styles.td, { flex: 1, textAlign: 'right', color: '#C0392B', fontWeight: '600' }]}>₹12,000</Text>
-            <Text style={[styles.td, { flex: 1, textAlign: 'right', color: '#1A7F4B' }]}>↓ 4%</Text>
-          </View>
-          
-          <View style={[styles.tr, { backgroundColor: '#FFFFFF' }]}>
-            <Text style={[styles.td, { flex: 2 }]}>Quality Control</Text>
-            <View style={[styles.td, { flex: 1 }]}><View style={[styles.statusPill, { backgroundColor: '#F0FBF5' }]}><Text style={[styles.statusText, { color: '#1A7F4B' }]}>Active</Text></View></View>
-            <Text style={[styles.td, { flex: 1, textAlign: 'right' }]}>4.0</Text>
-            <Text style={[styles.td, { flex: 1, textAlign: 'right', color: '#C0392B', fontWeight: '600' }]}>₹6,000</Text>
-            <Text style={[styles.td, { flex: 1, textAlign: 'right', color: '#1A7F4B' }]}>↓ 18%</Text>
-          </View>
-          
-          <View style={[styles.tr, { backgroundColor: '#F9F9F9', borderBottomWidth: 0 }]}>
-            <Text style={[styles.td, { flex: 2, fontWeight: '700' }]}>TOTAL</Text>
-            <View style={{ flex: 1 }} />
-            <Text style={[styles.td, { flex: 1, textAlign: 'right', fontWeight: '700' }]}>24.6</Text>
-            <Text style={[styles.td, { flex: 1, textAlign: 'right', color: '#C0392B', fontWeight: '700' }]}>₹36,500</Text>
-            <Text style={[styles.td, { flex: 1, textAlign: 'right' }]}></Text>
-          </View>
         </View>
       </View>
 
@@ -213,7 +217,7 @@ export default function StatsScreen({ store }) {
         <View style={styles.colHalf}>
           <View style={[styles.card, { flex: 1 }]}>
             <Text style={styles.sectionLabel}>DAILY DEAD COST</Text>
-            <CustomBarChart />
+            <CustomBarChart dailyTrend={data?.daily_trend} />
           </View>
         </View>
         <View style={styles.colHalf}>
@@ -230,15 +234,13 @@ export default function StatsScreen({ store }) {
           <View style={[styles.card, { flex: 1 }]}>
             <Text style={styles.sectionLabel}>OBSERVED PATTERNS</Text>
             
-            <View style={styles.patternCard}>
-              <Text style={styles.patternText}>Every Monday 2–4 PM, Assembly Line B drops below headcount threshold</Text>
-              <Text style={styles.patternFreq}>Observed 6 of last 8 weeks</Text>
-            </View>
-            
-            <View style={styles.patternCard}>
-              <Text style={styles.patternText}>Shift changeover at 14:00 routinely exceeds scheduled 15 minutes</Text>
-              <Text style={styles.patternFreq}>Observed consistently across all zones</Text>
-            </View>
+            {patterns.slice(0, 3).map((p, idx) => (
+              <View key={idx} style={styles.patternCard}>
+                <Text style={styles.patternText}>{p.zone_label || p.zone_id} idle at {p.hour_label}</Text>
+                <Text style={styles.patternFreq}>Observed {p.recurrence_count} times ({p.confidence.toFixed(0)}% confidence)</Text>
+              </View>
+            ))}
+            {patterns.length === 0 && <Text style={{ color: '#888888' }}>No patterns detected yet.</Text>}
 
           </View>
         </View>
@@ -246,13 +248,17 @@ export default function StatsScreen({ store }) {
           <View style={[styles.card, { flex: 1 }]}>
             <Text style={styles.sectionLabel}>CRITICAL BOTTLENECK</Text>
             
-            <View style={styles.bottleneckCard}>
-              <Text style={styles.bnZone}>Assembly Line B</Text>
-              <Text style={styles.bnRec}>Sustained worker absence at Station 2 is cascading idleness downstream. Reassign floater staff to alleviate.</Text>
-              <TouchableOpacity style={{ alignSelf: 'flex-end', marginTop: 12 }}>
-                <Text style={{ fontSize: 13, color: '#111111', textDecorationLine: 'underline' }}>View Zone →</Text>
-              </TouchableOpacity>
-            </View>
+            {bottlenecks.length > 0 ? (
+              <View style={styles.bottleneckCard}>
+                <Text style={styles.bnZone}>{bottlenecks[0].zone_label || bottlenecks[0].zone_id}</Text>
+                <Text style={styles.bnRec}>Recorded {bottlenecks[0].event_count} events causing {Number(bottlenecks[0].total_cascade_idle_hours).toFixed(1)}h cascade idle time.</Text>
+                <TouchableOpacity style={{ alignSelf: 'flex-end', marginTop: 12 }}>
+                  <Text style={{ fontSize: 13, color: '#111111', textDecorationLine: 'underline' }}>View Zone →</Text>
+                </TouchableOpacity>
+              </View>
+            ) : (
+              <Text style={{ color: '#888888' }}>No active bottlenecks.</Text>
+            )}
             
           </View>
         </View>
