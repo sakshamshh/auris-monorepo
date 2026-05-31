@@ -6,6 +6,7 @@ import {
 import { NavigationContainer } from "@react-navigation/native";
 import { createBottomTabNavigator } from "@react-navigation/bottom-tabs";
 import { BarChart } from "react-native-chart-kit";
+import { LinearGradient } from "expo-linear-gradient";
 
 import { getSavedCredentials, logout, fetchFactoryCameras, fetchDeadtime, fetchBottleneck, fetchPatterns } from "./services/api";
 import LoginScreen from "./screens/LoginScreen";
@@ -69,12 +70,14 @@ const DashboardTab = ({ store, cameraCount, data, loading, refreshing, onRefresh
 
   return (
     <View style={styles.tabContainer}>
+      <LinearGradient colors={["#0A0F16", "#040608"]} style={StyleSheet.absoluteFillObject} />
+      
       {/* Top Header */}
       <View style={styles.topBar}>
         <View>
           <Text style={styles.storeName}>{store.store_name || store.store_id}</Text>
           <View style={styles.statusRow}>
-            <View style={[styles.statusDot, { backgroundColor: cameraCount > 0 ? '#00FF9D' : '#FF3366' }]} />
+            <View style={[styles.statusDot, { backgroundColor: cameraCount > 0 ? '#00FF9D' : '#FF3366', shadowColor: cameraCount > 0 ? '#00FF9D' : '#FF3366', shadowOpacity: 0.8, shadowRadius: 6 }]} />
             <Text style={styles.camCount}>
               {cameraCount !== null ? `${cameraCount} CAMERAS ONLINE` : "LOADING..."}
             </Text>
@@ -89,7 +92,12 @@ const DashboardTab = ({ store, cameraCount, data, loading, refreshing, onRefresh
           <Text style={styles.trialValue}>Day {Math.max(1, trialDaysElapsed)} of 30</Text>
         </View>
         <View style={styles.trialTrack}>
-          <View style={[styles.trialFill, { width: `${trialProgress}%` }]} />
+          <LinearGradient
+            colors={["#00FF9D", "#00B8FF"]}
+            start={{ x: 0, y: 0 }}
+            end={{ x: 1, y: 0 }}
+            style={[styles.trialFill, { width: `${trialProgress}%` }]} 
+          />
         </View>
       </View>
 
@@ -98,7 +106,12 @@ const DashboardTab = ({ store, cameraCount, data, loading, refreshing, onRefresh
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#00FF9D" />}
       >
         {/* HERO METRICS: Split Costs */}
-        <View style={styles.heroCard}>
+        <LinearGradient 
+          colors={["rgba(22, 27, 34, 0.8)", "rgba(10, 15, 22, 0.95)"]}
+          start={{ x: 0, y: 0 }}
+          end={{ x: 1, y: 1 }}
+          style={styles.heroCard}
+        >
           <View style={styles.heroMainRow}>
             <View style={styles.heroMainCol}>
               <Text style={styles.heroLabel}>TODAY'S LOSS</Text>
@@ -106,7 +119,7 @@ const DashboardTab = ({ store, cameraCount, data, loading, refreshing, onRefresh
             </View>
             <View style={styles.heroMainCol}>
               <Text style={styles.heroLabel}>THIS WEEK</Text>
-              <Text style={[styles.heroValue, { color: '#FFB800' }]}>{fmtRs(weekCost)}</Text>
+              <Text style={[styles.heroValue, { color: '#FFD700' }]}>{fmtRs(weekCost)}</Text>
             </View>
           </View>
           
@@ -117,22 +130,21 @@ const DashboardTab = ({ store, cameraCount, data, loading, refreshing, onRefresh
             </View>
             <View style={styles.heroSubItem}>
               <Text style={styles.heroSubLabel}>DEAD HOURS</Text>
-              <Text style={[styles.heroSubValue, { color: '#8B949E' }]}>{fmtHrs(deadHours)}</Text>
+              <Text style={[styles.heroSubValue, { color: '#A0AEC0' }]}>{fmtHrs(deadHours)}</Text>
             </View>
             <View style={styles.heroSubItem}>
               <Text style={styles.heroSubLabel}>PROD HOURS</Text>
               <Text style={[styles.heroSubValue, { color: '#00FF9D' }]}>{fmtHrs(prodHours)}</Text>
             </View>
           </View>
-        </View>
+        </LinearGradient>
 
-        {/* AI NARRATIVE */}
         {narrative ? (
           <View style={styles.section}>
             <Text style={styles.sectionTitle}>AI INSIGHTS</Text>
-            <View style={[styles.card, { borderColor: '#00FF9D' }]}>
+            <LinearGradient colors={["rgba(0, 255, 157, 0.1)", "rgba(22, 27, 34, 0.9)"]} style={[styles.card, { borderColor: '#00FF9D', borderWidth: 1 }]}>
               <Text style={styles.narrativeText}>{narrative}</Text>
-            </View>
+            </LinearGradient>
           </View>
         ) : null}
 
@@ -167,64 +179,52 @@ const DashboardTab = ({ store, cameraCount, data, loading, refreshing, onRefresh
           </View>
         )}
 
-        {/* ZONES LIST */}
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>ZONE BREAKDOWN</Text>
-          {byZone.map((zone, idx) => (
-            <View key={idx} style={styles.card}>
-              <View style={styles.cardHeader}>
-                <Text style={styles.cardTitle}>{zone.zone_label}</Text>
-                <Text style={styles.cardCost}>{fmtRs(zone.dead_cost_inr)}</Text>
-              </View>
-              <View style={styles.cardRow}>
-                <Text style={styles.cardSub}>Dead: {fmtHrs(zone.dead_hours)}</Text>
-                <Text style={styles.cardSub}>Productive: {fmtHrs(zone.productive_hours)}</Text>
-              </View>
-            </View>
-          ))}
-          {byZone.length === 0 && (
-            <Text style={styles.emptyText}>No zone data available yet.</Text>
-          )}
-        </View>
+        {byZone.length > 0 && (
+          <View style={styles.section}>
+            <Text style={styles.sectionTitle}>ZONE BREAKDOWN</Text>
+            {byZone.map((z, idx) => (
+              <LinearGradient key={`zone-${idx}`} colors={["rgba(22, 27, 34, 0.7)", "rgba(10, 15, 22, 0.8)"]} style={styles.card}>
+                <View style={styles.cardHeader}>
+                  <Text style={styles.cardTitle}>{z.zone_label || z.zone_id}</Text>
+                  <Text style={styles.cardCost}>{fmtRs(z.dead_cost_inr)}</Text>
+                </View>
+                <View style={styles.cardRow}>
+                  <Text style={styles.cardSub}>Dead: {fmtHrs(z.dead_hours)}</Text>
+                  <Text style={styles.cardSub}>Prod: {fmtHrs(z.productive_hours)}</Text>
+                </View>
+              </LinearGradient>
+            ))}
+          </View>
+        )}
 
         {/* BOTTLENECKS */}
         <View style={styles.section}>
-          <Text style={styles.sectionTitle}>CRITICAL BOTTLENECKS</Text>
-          {bottlenecks.length > 0 ? (
-            bottlenecks.map((item, idx) => (
-              <View key={idx} style={styles.card}>
-                <View style={styles.cardHeader}>
-                  <Text style={styles.cardTitle}>#{idx + 1} {item.zone_label}</Text>
-                  <Text style={[styles.cardCost, { color: '#FFB800' }]}>{fmtRs(item.total_cost_inr)}</Text>
-                </View>
-                <View style={styles.cardRow}>
-                  <Text style={styles.cardSub}>Events: {item.event_count}</Text>
-                  <Text style={styles.cardSub}>Cascade: {fmtHrs(item.total_cascade_idle_hours)}</Text>
-                </View>
+          <Text style={styles.sectionTitle}>WORKSTATION BOTTLENECKS (30D)</Text>
+          {bottlenecks.length > 0 ? bottlenecks.map((b, idx) => (
+            <LinearGradient key={`btnk-${idx}`} colors={["rgba(255, 51, 102, 0.1)", "rgba(22, 27, 34, 0.9)"]} style={[styles.card, { borderColor: 'rgba(255, 51, 102, 0.3)' }]}>
+              <View style={styles.cardHeader}>
+                <Text style={styles.cardTitle}>{b.zone_label || b.zone_id}</Text>
+                <Text style={styles.cardCost}>{fmtRs(b.total_cost_inr)}</Text>
               </View>
-            ))
-          ) : (
+              <Text style={styles.cardSub}>{b.event_count} Events  •  {fmtHrs(b.total_cascade_idle_hours)} Cascade Idle</Text>
+            </LinearGradient>
+          )) : (
             <Text style={styles.emptyText}>No bottlenecks detected.</Text>
           )}
         </View>
 
         {/* PATTERNS */}
         <View style={styles.section}>
-          <Text style={styles.sectionTitle}>RECURRING PATTERNS</Text>
-          {patterns.length > 0 ? (
-            patterns.map((item, idx) => (
-              <View key={idx} style={styles.card}>
-                <View style={styles.cardHeader}>
-                  <Text style={styles.cardTitle}>{item.zone_label}</Text>
-                  <Text style={[styles.cardCost, { color: '#FF3366' }]}>{fmtRs(item.monthly_cost_inr)}/mo</Text>
-                </View>
-                <View style={styles.cardRow}>
-                  <Text style={styles.cardSub}>Time: {item.hour_label}</Text>
-                  <Text style={styles.cardSub}>Frequency: {item.recurrence_count}x</Text>
-                </View>
+          <Text style={styles.sectionTitle}>RECURRING PATTERNS (30D)</Text>
+          {patterns.length > 0 ? patterns.map((p, idx) => (
+            <LinearGradient key={`patt-${idx}`} colors={["rgba(0, 184, 255, 0.1)", "rgba(22, 27, 34, 0.9)"]} style={[styles.card, { borderColor: 'rgba(0, 184, 255, 0.3)' }]}>
+              <View style={styles.cardHeader}>
+                <Text style={styles.cardTitle}>{p.zone_label || p.zone_id} at {p.hour_label}</Text>
+                <Text style={[styles.cardCost, { color: '#00B8FF' }]}>{fmtRs(p.monthly_cost_inr)}</Text>
               </View>
-            ))
-          ) : (
+              <Text style={styles.cardSub}>Repeated {p.recurrence_count}x  •  {p.confidence.toFixed(0)}% Confidence</Text>
+            </LinearGradient>
+          )) : (
             <Text style={styles.emptyText}>No recurring patterns detected.</Text>
           )}
         </View>
@@ -239,6 +239,7 @@ const DashboardTab = ({ store, cameraCount, data, loading, refreshing, onRefresh
 const SettingsTab = ({ store, onLogout }) => {
   return (
     <View style={styles.tabContainer}>
+      <LinearGradient colors={["#0A0F16", "#040608"]} style={StyleSheet.absoluteFillObject} />
       <View style={styles.topBar}>
         <Text style={styles.storeName}>Settings</Text>
       </View>
@@ -387,77 +388,79 @@ export default function App() {
 }
 
 const styles = StyleSheet.create({
-  safeArea: { flex: 1, backgroundColor: "#0D1117", paddingTop: Platform.OS === "android" ? 25 : 0 },
-  tabContainer: { flex: 1, backgroundColor: "#0D1117" },
-  loadingContainer: { flex: 1, justifyContent: "center", alignItems: "center" },
+  safeArea: { flex: 1, backgroundColor: "#0A0F16", paddingTop: Platform.OS === "android" ? 25 : 0 },
+  tabContainer: { flex: 1, backgroundColor: "transparent" },
+  loadingContainer: { flex: 1, justifyContent: "center", alignItems: "center", backgroundColor: "#0A0F16" },
   
   topBar: {
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
-    backgroundColor: "#161B22",
-    paddingHorizontal: 20,
-    paddingVertical: 16,
+    backgroundColor: "transparent",
+    paddingHorizontal: 24,
+    paddingVertical: 18,
     borderBottomWidth: 1,
-    borderColor: "#30363D",
+    borderColor: "rgba(255,255,255,0.05)",
   },
-  storeName: { fontSize: 18, fontWeight: "800", color: "#FFFFFF", textTransform: "uppercase", letterSpacing: 1 },
-  statusRow: { flexDirection: "row", alignItems: "center", marginTop: 4 },
+  storeName: { fontSize: 22, fontWeight: "900", color: "#FFFFFF", textTransform: "uppercase", letterSpacing: 1.2 },
+  statusRow: { flexDirection: "row", alignItems: "center", marginTop: 6 },
   statusDot: { width: 8, height: 8, borderRadius: 4, marginRight: 6 },
-  camCount: { fontSize: 11, color: "#8B949E", fontWeight: "700", letterSpacing: 0.5 },
+  camCount: { fontSize: 12, color: "#8B949E", fontWeight: "700", letterSpacing: 0.8 },
   
-  trialBarContainer: { paddingHorizontal: 20, paddingVertical: 12, backgroundColor: "#161B22", borderBottomWidth: 1, borderColor: "#30363D" },
-  trialBarHeader: { flexDirection: "row", justifyContent: "space-between", marginBottom: 6 },
-  trialLabel: { fontSize: 10, color: "#8B949E", fontWeight: "700", letterSpacing: 1 },
-  trialValue: { fontSize: 10, color: "#00FF9D", fontWeight: "800", letterSpacing: 0.5 },
-  trialTrack: { height: 6, backgroundColor: "#30363D", borderRadius: 3, overflow: "hidden" },
-  trialFill: { height: "100%", backgroundColor: "#00FF9D", borderRadius: 3 },
+  trialBarContainer: { paddingHorizontal: 24, paddingVertical: 14, backgroundColor: "rgba(255,255,255,0.02)", borderBottomWidth: 1, borderColor: "rgba(255,255,255,0.05)" },
+  trialBarHeader: { flexDirection: "row", justifyContent: "space-between", marginBottom: 8 },
+  trialLabel: { fontSize: 11, color: "#A0AEC0", fontWeight: "800", letterSpacing: 1.2 },
+  trialValue: { fontSize: 11, color: "#00FF9D", fontWeight: "900", letterSpacing: 0.8 },
+  trialTrack: { height: 6, backgroundColor: "rgba(0,0,0,0.5)", borderRadius: 3, overflow: "hidden" },
+  trialFill: { height: "100%", borderRadius: 3 },
 
-  scrollContent: { padding: 16, paddingBottom: 40 },
-  errorText: { color: "#FF3366", fontSize: 14, textAlign: "center", marginTop: 20, marginBottom: 10 },
-  retryBtn: { alignSelf: 'center', backgroundColor: '#21262D', paddingHorizontal: 16, paddingVertical: 8, borderRadius: 6, borderWidth: 1, borderColor: '#30363D' },
-  retryText: { color: '#00FF9D', fontSize: 12, fontWeight: '700' },
-  emptyText: { color: "#8B949E", fontSize: 13, fontStyle: "italic", textAlign: "center", marginTop: 10 },
+  scrollContent: { padding: 20, paddingBottom: 60 },
+  errorText: { color: "#FF3366", fontSize: 16, textAlign: "center", marginTop: 20, marginBottom: 10, fontWeight: "600" },
+  retryBtn: { alignSelf: 'center', backgroundColor: 'rgba(255, 51, 102, 0.1)', paddingHorizontal: 20, paddingVertical: 10, borderRadius: 8, borderWidth: 1, borderColor: 'rgba(255, 51, 102, 0.3)' },
+  retryText: { color: '#FF3366', fontSize: 13, fontWeight: '800' },
+  emptyText: { color: "#4A5568", fontSize: 14, fontStyle: "italic", textAlign: "center", marginTop: 16 },
 
   heroCard: {
-    backgroundColor: "#161B22",
-    borderRadius: 16,
+    borderRadius: 20,
     padding: 24,
     borderWidth: 1,
-    borderColor: "#30363D",
-    marginBottom: 24,
+    borderColor: "rgba(255, 255, 255, 0.1)",
+    marginBottom: 28,
     shadowColor: "#000",
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3,
-    shadowRadius: 8,
-    elevation: 5,
+    shadowOffset: { width: 0, height: 10 },
+    shadowOpacity: 0.4,
+    shadowRadius: 15,
+    elevation: 8,
   },
-  heroMainRow: { flexDirection: "row", justifyContent: "space-between", marginBottom: 20 },
+  heroMainRow: { flexDirection: "row", justifyContent: "space-between", marginBottom: 24 },
   heroMainCol: { flex: 1 },
-  heroLabel: { fontSize: 11, color: "#8B949E", fontWeight: "800", letterSpacing: 1.5, marginBottom: 8 },
-  heroValue: { fontSize: 32, fontWeight: "900", color: "#FF3366", letterSpacing: -1 },
+  heroLabel: { fontSize: 12, color: "#A0AEC0", fontWeight: "800", letterSpacing: 1.5, marginBottom: 8 },
+  heroValue: { fontSize: 36, fontWeight: "900", color: "#FF3366", letterSpacing: -1.5, textShadowColor: "rgba(255, 51, 102, 0.3)", textShadowOffset: {width: 0, height: 2}, textShadowRadius: 10 },
   
-  heroSubRow: { flexDirection: "row", width: "100%", justifyContent: "space-between", borderTopWidth: 1, borderColor: "#30363D", paddingTop: 16 },
-  heroSubItem: { alignItems: "center" },
-  heroSubLabel: { fontSize: 10, color: "#8B949E", fontWeight: "700", letterSpacing: 1, marginBottom: 4 },
-  heroSubValue: { fontSize: 15, fontWeight: "800", color: "#FFFFFF" },
+  heroSubRow: { flexDirection: "row", width: "100%", justifyContent: "space-between", borderTopWidth: 1, borderColor: "rgba(255,255,255,0.08)", paddingTop: 18 },
+  heroSubItem: { alignItems: "flex-start" },
+  heroSubLabel: { fontSize: 11, color: "#718096", fontWeight: "800", letterSpacing: 1.2, marginBottom: 6 },
+  heroSubValue: { fontSize: 16, fontWeight: "800", color: "#E2E8F0" },
 
-  section: { marginBottom: 24 },
-  sectionTitle: { fontSize: 12, color: "#8B949E", fontWeight: "800", letterSpacing: 1.5, marginBottom: 12, paddingLeft: 4 },
+  section: { marginBottom: 28 },
+  sectionTitle: { fontSize: 13, color: "#A0AEC0", fontWeight: "900", letterSpacing: 2, marginBottom: 16, paddingLeft: 4, textTransform: "uppercase" },
   
   card: {
-    backgroundColor: "#161B22",
-    borderRadius: 12,
-    padding: 16,
-    marginBottom: 10,
+    borderRadius: 16,
+    padding: 20,
+    marginBottom: 12,
     borderWidth: 1,
-    borderColor: "#30363D",
+    borderColor: "rgba(255,255,255,0.06)",
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.2,
+    shadowRadius: 8,
   },
-  cardHeader: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 8 },
-  cardTitle: { fontSize: 15, fontWeight: "700", color: "#E6EDF3", flex: 1 },
-  cardCost: { fontSize: 16, fontWeight: "800", color: "#FF3366" },
-  cardRow: { flexDirection: "row", justifyContent: "space-between" },
-  cardSub: { fontSize: 12, color: "#8B949E", fontWeight: "600" },
+  cardHeader: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 12 },
+  cardTitle: { fontSize: 16, fontWeight: "800", color: "#F7FAFC", flex: 1, letterSpacing: 0.5 },
+  cardCost: { fontSize: 18, fontWeight: "900", color: "#FF3366" },
+  cardRow: { flexDirection: "row", justifyContent: "space-between", marginTop: 4 },
+  cardSub: { fontSize: 13, color: "#A0AEC0", fontWeight: "600", letterSpacing: 0.3 },
   
-  narrativeText: { fontSize: 14, color: "#C9D1D9", lineHeight: 22, fontWeight: "500" }
+  narrativeText: { fontSize: 15, color: "#E2E8F0", lineHeight: 24, fontWeight: "500", letterSpacing: 0.2 }
 });

@@ -377,7 +377,7 @@ async def get_bottlenecks(request: Request):
 
     for station in raw_stations:
         zone_id = station.get("zone_id")
-        zone_info = zone_configs.get(zone_id)
+        zone_info = zone_configs.get(zone_id) or {}
         zone_label = zone_info.get("zone_label") or zone_info.get("label") or station.get("zone_label") or zone_id
 
         ranked_stations.append({
@@ -445,7 +445,7 @@ async def get_patterns(request: Request):
     serialized_patterns = []
     async for p in cursor:
         zone_id = p.get("zone_id")
-        zone_info = zone_configs.get(zone_id)
+        zone_info = zone_configs.get(zone_id) or {}
         zone_label = zone_info.get("zone_label") or zone_info.get("label") or p.get("zone_label") or zone_id
 
         serialized_patterns.append({
