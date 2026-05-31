@@ -90,19 +90,38 @@ function MainTabs({ store, onLogout }) {
 }
 
 export default function App() {
-  const [store, setStore] = useState({
-    store_id: 'home_test_2',
-    store_name: 'Home Test 2',
-    password: 'auris123'
-  });
+  const [store, setStore] = useState(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const saved = await getSavedCredentials();
+        if (saved) setStore(saved);
+      } catch (e) {
+        // ignore
+      } finally {
+        setLoading(false);
+      }
+    })();
+  }, []);
 
   const handleLogin = (data, password) => {
     setStore({ ...data, password });
   };
 
   const handleLogout = async () => {
+    await logout();
     setStore(null);
   };
+
+  if (loading) {
+    return (
+      <View style={styles.loadingContainer}>
+        <ActivityIndicator color="#111111" />
+      </View>
+    );
+  }
 
   if (!store) {
     return <LoginScreen onLogin={handleLogin} />;
