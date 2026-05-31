@@ -31,8 +31,8 @@ const Navbar = ({ storeName, navigation, onLogout }) => (
       <TouchableOpacity onPress={() => navigation.navigate("Support")}>
         <Text style={styles.navSupportLink}>Support</Text>
       </TouchableOpacity>
-      <TouchableOpacity onPress={onLogout} style={{ marginLeft: 16 }}>
-        <Text style={{ fontSize: 16, color: '#888888' }}>⎋</Text>
+      <TouchableOpacity onPress={onLogout} style={{ marginLeft: 20 }}>
+        <Text style={styles.navSupportLink}>Log Out</Text>
       </TouchableOpacity>
     </View>
   </View>
@@ -96,11 +96,17 @@ export default function App() {
     password: 'auris123'
   });
 
-  const handleLogout = async () => {
-    // No-op since there's no login screen
+  const handleLogin = (data, password) => {
+    setStore({ ...data, password });
   };
 
-  if (!store) return null;
+  const handleLogout = async () => {
+    setStore(null);
+  };
+
+  if (!store) {
+    return <LoginScreen onLogin={handleLogin} />;
+  }
 
   return (
     <SafeAreaView style={styles.safeArea}>
@@ -146,7 +152,7 @@ const styles = StyleSheet.create({
   tabBar: {
     flexDirection: "row",
     backgroundColor: "#FFFFFF",
-    height: 40,
+    height: 56,
     borderBottomWidth: 1,
     borderColor: "#EFEFEF",
   },
@@ -161,13 +167,14 @@ const styles = StyleSheet.create({
     borderBottomColor: "#111111",
   },
   tabText: {
-    fontSize: 12,
+    fontSize: 14,
     fontWeight: "500",
     color: "#888888",
     textTransform: "uppercase",
-    letterSpacing: 0.6,
+    letterSpacing: 0.8,
   },
   tabTextActive: {
     color: "#111111",
+    fontWeight: "600",
   }
 });

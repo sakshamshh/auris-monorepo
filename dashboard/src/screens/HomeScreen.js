@@ -6,9 +6,6 @@ import { fetchDeadtime, fetchFactoryCameras } from '../services/api';
 const screenWidth = Dimensions.get('window').width;
 
 const CustomBarChart = ({ dailyTrend }) => {
-  // Extract last 7 days of data.
-  // We don't have "last week" data from the current API response format in daily_trend, 
-  // so we'll just plot the current week and leave last week as 0 to avoid faking data.
   const data = dailyTrend ? dailyTrend.map(d => {
     const day = new Date(d.date).toLocaleDateString('en-US', { weekday: 'short' });
     return { day, thisWeek: d.cost || 0, lastWeek: 0 };
@@ -16,15 +13,22 @@ const CustomBarChart = ({ dailyTrend }) => {
 
   const chartHeight = 180;
   const paddingVertical = 20;
-  const maxVal = Math.max(...data.map(d => d.thisWeek), 5000); 
+  const maxValueInData = Math.max(...data.map(d => d.thisWeek), 0);
+  const maxVal = Math.max(maxValueInData, 5000); 
   const yLabels = [0, maxVal * 0.25, maxVal * 0.5, maxVal * 0.75, maxVal];
 
   const getBarHeight = (val) => ((val / maxVal) * (chartHeight - paddingVertical * 2));
   
   const innerWidth = screenWidth > 768 ? 1200 : screenWidth - 80;
   const groupWidth = innerWidth / Math.max(data.length, 1);
-  const barWidth = 12;
-  const gap = 4;
+  const barWidth = 24;
+  const gap = 8;
+
+  const formatY = (val) => {
+    if (val === 0) return '0';
+    if (val >= 1000) return (val / 1000).toFixed(val % 1000 === 0 ? 0 : 1) + 'k';
+    return Math.round(val).toString();
+  };
 
   return (
     <View style={styles.chartWrapper}>
@@ -44,24 +48,24 @@ const CustomBarChart = ({ dailyTrend }) => {
           const y = chartHeight - paddingVertical - ((val / maxVal) * (chartHeight - paddingVertical * 2));
           return (
             <React.Fragment key={`grid-${i}`}>
-              <Line x1="40" y1={y} x2="100%" y2={y} stroke="#F5F5F5" strokeWidth="1" />
-              <SvgText x="30" y={y + 4} fontSize="11" fill="#BBBBBB" textAnchor="end">
-                {val === 0 ? '0' : `${Math.round(val / 1000)}k`}
+              <Line x1="45" y1={y} x2="100%" y2={y} stroke="#F5F5F5" strokeWidth="1" />
+              <SvgText x="35" y={y + 4} fontSize="11" fill="#BBBBBB" textAnchor="end">
+                {formatY(val)}
               </SvgText>
             </React.Fragment>
           );
         })}
 
         {data.map((d, i) => {
-          const xGroup = 40 + i * groupWidth + (groupWidth / 2) - barWidth - (gap / 2);
+          const xGroup = 45 + i * groupWidth + (groupWidth / 2) - barWidth - (gap / 2);
           const yThisWeek = chartHeight - paddingVertical - getBarHeight(d.thisWeek);
           const yLastWeek = chartHeight - paddingVertical - getBarHeight(d.lastWeek);
 
           return (
             <React.Fragment key={`group-${i}`}>
-              <Rect x={xGroup} y={yThisWeek} width={barWidth} height={getBarHeight(d.thisWeek)} fill="#111111" rx="3" ry="3" />
-              <Rect x={xGroup + barWidth + gap} y={yLastWeek} width={barWidth} height={getBarHeight(d.lastWeek)} fill="#EFEFEF" rx="3" ry="3" />
-              <SvgText x={40 + i * groupWidth + (groupWidth / 2)} y={chartHeight} fontSize="11" fill="#BBBBBB" textAnchor="middle">
+              <Rect x={xGroup} y={yThisWeek} width={barWidth} height={getBarHeight(d.thisWeek)} fill="#C0392B" rx="4" ry="4" />
+              <Rect x={xGroup + barWidth + gap} y={yLastWeek} width={barWidth} height={getBarHeight(d.lastWeek)} fill="#EFEFEF" rx="4" ry="4" />
+              <SvgText x={45 + i * groupWidth + (groupWidth / 2)} y={chartHeight} fontSize="11" fill="#BBBBBB" textAnchor="middle">
                 {d.day}
               </SvgText>
             </React.Fragment>

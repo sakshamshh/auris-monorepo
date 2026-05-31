@@ -13,10 +13,22 @@ const CustomBarChart = ({ dailyTrend }) => {
 
   const chartHeight = 220; // taller than home
   const paddingVertical = 20;
-  const maxVal = Math.max(...data.map(d => d.thisWeek), 5000); 
-  const yLabels = [0, 5000, 10000, 15000, 20000, 25000];
+  const maxValueInData = Math.max(...data.map(d => d.thisWeek), 0);
+  const maxVal = Math.max(maxValueInData, 5000); 
+  const yLabels = [0, maxVal * 0.25, maxVal * 0.5, maxVal * 0.75, maxVal];
   const getBarHeight = (val) => ((val / maxVal) * (chartHeight - paddingVertical * 2));
   
+  const innerWidth = screenWidth > 768 ? 1200 : screenWidth - 80;
+  const groupWidth = innerWidth / Math.max(data.length, 1);
+  const barWidth = 24;
+  const gap = 8;
+
+  const formatY = (val) => {
+    if (val === 0) return '0';
+    if (val >= 1000) return (val / 1000).toFixed(val % 1000 === 0 ? 0 : 1) + 'k';
+    return Math.round(val).toString();
+  };
+
   return (
     <View style={{ width: '100%', height: chartHeight }}>
       <View style={{ flexDirection: 'row', justifyContent: 'flex-end', marginBottom: 16 }}>
@@ -35,20 +47,20 @@ const CustomBarChart = ({ dailyTrend }) => {
           const y = chartHeight - 30 - paddingVertical - ((val / maxVal) * (chartHeight - 30 - paddingVertical * 2));
           return (
             <React.Fragment key={`grid-${i}`}>
-              <Line x1="40" y1={y} x2="100%" y2={y} stroke="#F5F5F5" strokeWidth="1" />
-              <SvgText x="30" y={y + 4} fontSize="11" fill="#BBBBBB" textAnchor="end">{val === 0 ? '0' : `${val / 1000}k`}</SvgText>
+              <Line x1="45" y1={y} x2="100%" y2={y} stroke="#F5F5F5" strokeWidth="1" />
+              <SvgText x="35" y={y + 4} fontSize="11" fill="#BBBBBB" textAnchor="end">{formatY(val)}</SvgText>
             </React.Fragment>
           );
         })}
         {data.map((d, i) => {
-          // approx responsive calculation for svg without wrapper width
-          const colW = `${(100 - 15) / 7}%`;
-          const xOffset = 10 + i * 12.5; 
+          const xGroup = 45 + i * groupWidth + (groupWidth / 2) - barWidth - (gap / 2);
+          const yThisWeek = chartHeight - 30 - paddingVertical - getBarHeight(d.thisWeek);
+          const yLastWeek = chartHeight - 30 - paddingVertical - getBarHeight(d.lastWeek);
           return (
             <React.Fragment key={`group-${i}`}>
-              <Rect x={`${xOffset + 2}%`} y={chartHeight - 30 - paddingVertical - getBarHeight(d.thisWeek)} width="8" height={getBarHeight(d.thisWeek)} fill="#111111" rx="3" ry="3" />
-              <Rect x={`${xOffset + 2}%`} dx="12" y={chartHeight - 30 - paddingVertical - getBarHeight(d.lastWeek)} width="8" height={getBarHeight(d.lastWeek)} fill="#EFEFEF" rx="3" ry="3" />
-              <SvgText x={`${xOffset + 4}%`} y={chartHeight - 15} fontSize="11" fill="#BBBBBB" textAnchor="middle">{d.day}</SvgText>
+              <Rect x={xGroup} y={yThisWeek} width={barWidth} height={getBarHeight(d.thisWeek)} fill="#C0392B" rx="4" ry="4" />
+              <Rect x={xGroup + barWidth + gap} y={yLastWeek} width={barWidth} height={getBarHeight(d.lastWeek)} fill="#EFEFEF" rx="4" ry="4" />
+              <SvgText x={45 + i * groupWidth + (groupWidth / 2)} y={chartHeight - 15} fontSize="11" fill="#BBBBBB" textAnchor="middle">{d.day}</SvgText>
             </React.Fragment>
           );
         })}
@@ -56,63 +68,7 @@ const CustomBarChart = ({ dailyTrend }) => {
     </View>
   );
 };
-
-const CustomHeatmap = () => {
-  const days = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
-  const hours = [6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18];
-  
-  // mock values 0.0 to 1.0
-  const matrix = Array.from({length: 13}, () => Array.from({length: 7}, () => Math.random()));
-  
-  const getColor = (val) => {
-    // #FFF5F5 to #C0392B
-    // RGB for #FFF5F5 is 255, 245, 245
-    // RGB for #C0392B is 192, 57, 43
-    const r = Math.round(255 - val * (255 - 192));
-    const g = Math.round(245 - val * (245 - 57));
-    const b = Math.round(245 - val * (245 - 43));
-    return `rgb(${r},${g},${b})`;
-  };
-
-  return (
-    <View style={{ width: '100%', alignItems: 'center' }}>
-      <View style={{ flexDirection: 'row' }}>
-        {/* Y Axis */}
-        <View style={{ width: 30, justifyContent: 'space-between', paddingVertical: 10, marginRight: 4 }}>
-          {hours.filter((_, i) => i % 2 === 0).map(h => (
-            <Text key={h} style={{ fontSize: 11, color: '#BBBBBB', textAlign: 'right' }}>{h}h</Text>
-          ))}
-        </View>
-        {/* Grid */}
-        <View style={{ flexDirection: 'column' }}>
-          {matrix.map((row, rIdx) => (
-            <View key={`r-${rIdx}`} style={{ flexDirection: 'row', marginBottom: 2 }}>
-              {row.map((cell, cIdx) => (
-                <View key={`c-${cIdx}`} style={{ width: 24, height: 16, backgroundColor: getColor(cell), marginHorizontal: 1, borderRadius: 2 }} />
-              ))}
-            </View>
-          ))}
-          {/* X Axis */}
-          <View style={{ flexDirection: 'row', marginTop: 4 }}>
-            {days.map(d => (
-              <View key={d} style={{ width: 26, alignItems: 'center' }}>
-                <Text style={{ fontSize: 11, color: '#BBBBBB' }}>{d[0]}</Text>
-              </View>
-            ))}
-          </View>
-        </View>
-      </View>
-      {/* Legend */}
-      <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 16 }}>
-        <Text style={{ fontSize: 11, color: '#BBBBBB', marginRight: 8 }}>Low</Text>
-        <View style={{ width: 100, height: 6, borderRadius: 3, overflow: 'hidden', flexDirection: 'row' }}>
-           {[0, 0.25, 0.5, 0.75, 1].map(v => <View key={v} style={{ flex: 1, backgroundColor: getColor(v) }} />)}
-        </View>
-        <Text style={{ fontSize: 11, color: '#BBBBBB', marginLeft: 8 }}>High</Text>
-      </View>
-    </View>
-  );
-};
+// Heatmap removed as requested
 
 export default function StatsScreen({ store }) {
   const [range, setRange] = useState('This Week');
@@ -222,8 +178,16 @@ export default function StatsScreen({ store }) {
         </View>
         <View style={styles.colHalf}>
           <View style={[styles.card, { flex: 1 }]}>
-            <Text style={styles.sectionLabel}>HOURLY IDLE HEATMAP</Text>
-            <CustomHeatmap />
+            <Text style={styles.sectionLabel}>TOP ZONES</Text>
+            
+            {byZone.slice(0, 5).map((z, i) => (
+              <View key={i} style={{ flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 12, borderBottomWidth: i === byZone.length - 1 || i === 4 ? 0 : 1, borderColor: '#EFEFEF' }}>
+                <Text style={{ fontSize: 14, color: '#111111' }}>{z.zone_label || z.zone_id}</Text>
+                <Text style={{ fontSize: 14, color: '#C0392B', fontWeight: '500' }}>{fmtRs(z.dead_cost_inr)}</Text>
+              </View>
+            ))}
+            {byZone.length === 0 && <Text style={{ color: '#888888', marginTop: 12 }}>No data available.</Text>}
+
           </View>
         </View>
       </View>
