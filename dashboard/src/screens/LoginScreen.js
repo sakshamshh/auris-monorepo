@@ -1,165 +1,199 @@
-import React, { useState } from "react";
-import { View, Text, TextInput, TouchableOpacity, StyleSheet, ActivityIndicator, KeyboardAvoidingView, Platform, Alert } from "react-native";
-import { login, requestPasswordReset } from "../services/api";
+import React, { useState } from 'react';
+import { 
+  View, Text, TextInput, TouchableOpacity, StyleSheet, 
+  ActivityIndicator, KeyboardAvoidingView, Platform, ScrollView 
+} from 'react-native';
+import { login } from '../services/api';
 
-export default function LoginScreen({ onLogin, onAdmin }) {
-  const [storeId, setStoreId] = useState("");
-  const [password, setPassword] = useState("");
+export default function LoginScreen({ onLogin }) {
+  const [storeId, setStoreId] = useState('');
+  const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState(null);
 
-  // Forgot password state
-  const [showForgotPassword, setShowForgotPassword] = useState(false);
-  const [forgotStoreId, setForgotStoreId] = useState("");
-  const [resetLoading, setResetLoading] = useState(false);
-  const [resetMessage, setResetMessage] = useState("");
+  const [showForgot, setShowForgot] = useState(false);
+  const [resetId, setResetId] = useState('');
+
+  const [showAccess, setShowAccess] = useState(false);
+  const [accessName, setAccessName] = useState('');
+  const [accessPhone, setAccessPhone] = useState('');
 
   const handleLogin = async () => {
-    if (!storeId.trim() || !password.trim()) {
-      Alert.alert("Error", "Please enter Store ID and password");
-      return;
-    }
+    if (!storeId || !password) return;
     setLoading(true);
+    setError(null);
     try {
-      const data = await login(storeId.trim(), password.trim());
-      onLogin(data, password.trim());
+      const data = await login(storeId, password);
+      onLogin(data, password);
     } catch (e) {
-      Alert.alert("Login Failed", "Invalid Store ID or password");
+      setError('Invalid credentials');
     } finally {
       setLoading(false);
     }
   };
 
-  const handleResetRequest = async () => {
-    if (!forgotStoreId.trim()) {
-      Alert.alert("Error", "Please enter your Store ID");
-      return;
-    }
-    setResetLoading(true);
-    try {
-      const data = await requestPasswordReset(forgotStoreId.trim());
-      if (data.success) {
-        setResetMessage("Password reset requested. Contact your Auris administrator.");
-      } else {
-        Alert.alert("Error", data.message || "Store not found");
-      }
-    } catch (e) {
-      Alert.alert("Error", "Failed to submit reset request. Please try again.");
-    } finally {
-      setResetLoading(false);
-    }
-  };
+  return (
+    <View style={styles.container}>
+      <ScrollView contentContainerStyle={styles.scrollContent}>
+        <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : "height"} style={styles.cardWrapper}>
+          
+          <View style={styles.card}>
+            <Text style={styles.brand}>Auris</Text>
+            <Text style={styles.tagline}>Factory Intelligence by Skym Labs</Text>
+            
+            <View style={styles.divider} />
+            
+            {error ? <Text style={styles.errorText}>{error}</Text> : null}
 
-  if (showForgotPassword) {
-    return (
-      <KeyboardAvoidingView style={styles.container} behavior={Platform.OS === "ios" ? "padding" : "height"}>
-        <View style={styles.inner}>
-          <TouchableOpacity
-            style={styles.logoWrap}
-            onLongPress={onAdmin}
-            delayLongPress={800}
-            activeOpacity={0.9}
-          >
-            <Text style={styles.logoText}>Auris</Text>
-            <Text style={styles.logoSub}>Reset Password</Text>
-          </TouchableOpacity>
-          <View style={styles.form}>
-            {resetMessage ? (
-              <View>
-                <Text style={styles.successText}>{resetMessage}</Text>
-                <TouchableOpacity style={styles.btn} onPress={() => { setShowForgotPassword(false); setResetMessage(""); }}>
-                  <Text style={styles.btnText}>Back to Sign In</Text>
-                </TouchableOpacity>
-              </View>
-            ) : (
-              <View>
-                <Text style={styles.label}>STORE ID</Text>
-                <TextInput 
-                  style={styles.input} 
-                  placeholder="Enter your Store ID" 
-                  placeholderTextColor="#86868B" 
-                  value={forgotStoreId} 
-                  onChangeText={setForgotStoreId} 
-                  autoCapitalize="none" 
-                  autoCorrect={false} 
+            <Text style={styles.label}>Store ID</Text>
+            <TextInput
+              style={styles.input}
+              placeholder="your-store-id"
+              placeholderTextColor="#BBBBBB"
+              value={storeId}
+              onChangeText={setStoreId}
+              autoCapitalize="none"
+              autoCorrect={false}
+            />
+
+            <Text style={[styles.label, { marginTop: 16 }]}>Password</Text>
+            <TextInput
+              style={[styles.input, { marginBottom: 8 }]}
+              placeholder="••••••••"
+              placeholderTextColor="#BBBBBB"
+              value={password}
+              onChangeText={setPassword}
+              secureTextEntry
+            />
+
+            <TouchableOpacity style={styles.forgotLink} onPress={() => setShowForgot(!showForgot)}>
+              <Text style={styles.forgotText}>Forgot password?</Text>
+            </TouchableOpacity>
+
+            {showForgot && (
+              <View style={styles.inlineSection}>
+                <Text style={[styles.label, { marginBottom: 4 }]}>Enter your Store ID to reset</Text>
+                <TextInput
+                  style={styles.input}
+                  placeholder="your-store-id"
+                  placeholderTextColor="#BBBBBB"
+                  value={resetId}
+                  onChangeText={setResetId}
+                  autoCapitalize="none"
                 />
-                <TouchableOpacity style={[styles.btn, resetLoading && styles.btnDisabled]} onPress={handleResetRequest} disabled={resetLoading}>
-                  {resetLoading ? <ActivityIndicator color="#fff" /> : <Text style={styles.btnText}>Request Reset</Text>}
-                </TouchableOpacity>
-                <TouchableOpacity style={styles.backLink} onPress={() => setShowForgotPassword(false)}>
-                  <Text style={styles.backLinkText}>Back to Sign In</Text>
+                <TouchableOpacity style={styles.secondaryBtn}>
+                  <Text style={styles.secondaryBtnText}>Send Reset Link</Text>
                 </TouchableOpacity>
               </View>
             )}
-            <Text style={styles.footer}>Powered by Skym Labs</Text>
-          </View>
-        </View>
-      </KeyboardAvoidingView>
-    );
-  }
 
-  return (
-    <KeyboardAvoidingView style={styles.container} behavior={Platform.OS === "ios" ? "padding" : "height"}>
-      <View style={styles.inner}>
-        <TouchableOpacity
-          style={styles.logoWrap}
-          onLongPress={onAdmin}
-          delayLongPress={800}
-          activeOpacity={0.9}
-        >
-          <Text style={styles.logoText}>Auris</Text>
-          <Text style={styles.logoSub}>Client Portal</Text>
-        </TouchableOpacity>
-        <View style={styles.form}>
-          <Text style={styles.label}>STORE ID</Text>
-          <TextInput 
-            style={styles.input} 
-            placeholder="Enter your Store ID" 
-            placeholderTextColor="#86868B" 
-            value={storeId} 
-            onChangeText={setStoreId} 
-            autoCapitalize="none" 
-            autoCorrect={false} 
-          />
-          <Text style={styles.label}>PASSWORD</Text>
-          <TextInput 
-            style={styles.input} 
-            placeholder="Your secure password" 
-            placeholderTextColor="#86868B" 
-            value={password} 
-            onChangeText={setPassword} 
-            secureTextEntry 
-          />
-          <TouchableOpacity style={[styles.btn, loading && styles.btnDisabled]} onPress={handleLogin} disabled={loading}>
-            {loading ? <ActivityIndicator color="#fff" /> : <Text style={styles.btnText}>Sign In</Text>}
-          </TouchableOpacity>
-          
-          <TouchableOpacity style={styles.forgotLink} onPress={() => { setShowForgotPassword(true); setResetMessage(""); setForgotStoreId(""); }}>
-            <Text style={styles.forgotLinkText}>Forgot Password?</Text>
-          </TouchableOpacity>
-          
-          <Text style={styles.footer}>Powered by Skym Labs</Text>
-        </View>
-      </View>
-    </KeyboardAvoidingView>
+            <TouchableOpacity style={styles.primaryBtn} onPress={handleLogin} disabled={loading}>
+              {loading ? (
+                <ActivityIndicator color="#FFFFFF" />
+              ) : (
+                <Text style={styles.primaryBtnText}>Log In</Text>
+              )}
+            </TouchableOpacity>
+
+            <View style={[styles.divider, { marginVertical: 20 }]} />
+
+            <TouchableOpacity onPress={() => setShowAccess(!showAccess)}>
+              <Text style={styles.accessText}>Need access? Request here</Text>
+            </TouchableOpacity>
+
+            {showAccess && (
+              <View style={styles.inlineSection}>
+                <Text style={[styles.label, { marginBottom: 4 }]}>Name</Text>
+                <TextInput style={styles.input} value={accessName} onChangeText={setAccessName} />
+                
+                <Text style={[styles.label, { marginTop: 12, marginBottom: 4 }]}>Phone</Text>
+                <TextInput style={styles.input} value={accessPhone} onChangeText={setAccessPhone} keyboardType="phone-pad" />
+                
+                <TouchableOpacity style={[styles.secondaryBtn, { marginTop: 16 }]}>
+                  <Text style={styles.secondaryBtnText}>Submit Request</Text>
+                </TouchableOpacity>
+                <Text style={styles.helperText}>We'll set up your account and send credentials.</Text>
+              </View>
+            )}
+          </View>
+
+          <Text style={styles.footerText}>© Auris by Skym Labs · support@skymlabs.com</Text>
+
+        </KeyboardAvoidingView>
+      </ScrollView>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
-  container:      { flex: 1, backgroundColor: "#F5F5F7" },
-  inner:          { flex: 1, justifyContent: "center", paddingHorizontal: 32 },
-  logoWrap:       { marginBottom: 56, alignItems: "center" },
-  logoText:       { fontSize: 48, fontWeight: "800", color: "#1D1D1F", letterSpacing: -1.5 },
-  logoSub:        { fontSize: 13, color: "#A68B5B", letterSpacing: 4, textTransform: "uppercase", marginTop: 6, fontWeight: "700" },
-  form:           { backgroundColor: "#FFFFFF", borderRadius: 24, padding: 32, shadowColor: "#000", shadowOffset: { width: 0, height: 12 }, shadowOpacity: 0.05, shadowRadius: 24, elevation: 5 },
-  label:          { fontSize: 11, color: "#86868B", letterSpacing: 1.5, marginBottom: 12, marginTop: 24, fontWeight: "700" },
-  input:          { backgroundColor: "#F5F5F7", borderRadius: 12, padding: 18, color: "#1D1D1F", fontSize: 16, fontWeight: "500", shadowColor: "#000", shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.02, shadowRadius: 4 },
-  btn:            { backgroundColor: "#1D1D1F", borderRadius: 12, padding: 18, alignItems: "center", marginTop: 32, shadowColor: "#000", shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.1, shadowRadius: 8 },
-  btnDisabled:    { opacity: 0.6 },
-  btnText:        { color: "#FFFFFF", fontWeight: "700", fontSize: 16, letterSpacing: 0.5 },
-  forgotLink:     { alignSelf: "center", marginTop: 20 },
-  forgotLinkText: { color: "#86868B", fontSize: 14, fontWeight: "600", textDecorationLine: "underline" },
-  backLink:       { alignSelf: "center", marginTop: 20 },
-  backLinkText:   { color: "#86868B", fontSize: 14, fontWeight: "600" },
-  successText:    { fontSize: 15, color: "#1D1D1F", textAlign: "center", lineHeight: 22, fontWeight: "500", marginBottom: 8 },
-  footer:         { textAlign: "center", color: "#86868B", fontSize: 12, marginTop: 32, letterSpacing: 0.5, fontWeight: "500" },
+  container: { flex: 1, backgroundColor: '#F9F9F9' },
+  scrollContent: { flexGrow: 1, justifyContent: 'center', alignItems: 'center', padding: 20 },
+  cardWrapper: { width: '100%', maxWidth: 400, alignItems: 'center' },
+  
+  card: {
+    width: '100%',
+    backgroundColor: '#FFFFFF',
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: '#EFEFEF',
+    padding: 40,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.06,
+    shadowRadius: 24,
+    elevation: 4,
+    marginBottom: 20,
+  },
+  
+  brand: { fontSize: 28, fontWeight: '700', color: '#111111', textAlign: 'center' },
+  tagline: { fontSize: 13, color: '#888888', textAlign: 'center', marginTop: 4 },
+  
+  divider: { height: 1, backgroundColor: '#EFEFEF', width: '100%', marginVertical: 24 },
+  
+  label: { fontSize: 12, fontWeight: '500', color: '#111111', marginBottom: 6 },
+  input: {
+    width: '100%',
+    height: 44,
+    borderWidth: 1,
+    borderColor: '#EFEFEF',
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    fontSize: 14,
+    color: '#111111',
+  },
+  
+  forgotLink: { alignSelf: 'flex-end' },
+  forgotText: { fontSize: 13, color: '#888888', textDecorationLine: 'underline' },
+  
+  primaryBtn: {
+    width: '100%',
+    height: 44,
+    backgroundColor: '#C0392B', // Loss / dead cost accent ONLY on Log In button
+    borderRadius: 8,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginTop: 20,
+  },
+  primaryBtnText: { color: '#FFFFFF', fontSize: 14, fontWeight: '500' },
+  
+  accessText: { fontSize: 13, color: '#888888', textAlign: 'center', textDecorationLine: 'underline' },
+  
+  inlineSection: { marginTop: 16, padding: 16, backgroundColor: '#F9F9F9', borderRadius: 8, borderWidth: 1, borderColor: '#EFEFEF' },
+  secondaryBtn: {
+    width: '100%',
+    height: 36,
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: '#111111',
+    borderRadius: 8,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginTop: 12,
+  },
+  secondaryBtnText: { color: '#111111', fontSize: 14, fontWeight: '500' },
+  helperText: { fontSize: 12, color: '#888888', marginTop: 8, textAlign: 'center' },
+  
+  errorText: { color: '#C0392B', fontSize: 13, marginBottom: 16, textAlign: 'center', fontWeight: '500' },
+  
+  footerText: { fontSize: 12, color: '#BBBBBB', textAlign: 'center' }
 });
