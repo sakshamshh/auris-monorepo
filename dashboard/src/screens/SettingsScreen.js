@@ -104,40 +104,7 @@ export default function SettingsScreen({ store, onLogout }) {
         <Text style={[styles.helperText, { marginTop: 8 }]}>Sent every night at 9 PM with dead cost summary and zone performance.</Text>
       </View>
 
-      {/* Card 5: Billing */}
-      <View style={[styles.card, { padding: 0 }]}>
-        <View style={{ padding: 20, paddingBottom: 0 }}>
-          <Text style={styles.sectionLabel}>BILLING & INVOICES</Text>
-          <View style={styles.divider} />
-        </View>
-        <View style={{ width: '100%' }}>
-          <View style={styles.trHeader}>
-            <Text style={[styles.th, { flex: 1.5 }]}>Date</Text>
-            <Text style={[styles.th, { flex: 2 }]}>Invoice ID</Text>
-            <Text style={[styles.th, { flex: 1 }]}>Amount</Text>
-            <Text style={[styles.th, { flex: 1 }]}>Status</Text>
-            <Text style={[styles.th, { width: 30 }]}></Text>
-          </View>
-          {[
-            { date: 'May 01, 2026', id: 'INV-2026-05', amt: '₹14,999', stat: 'Paid' },
-            { date: 'Apr 01, 2026', id: 'INV-2026-04', amt: '₹14,999', stat: 'Paid' },
-            { date: 'Mar 14, 2026', id: 'INV-2026-03', amt: '₹8,500', stat: 'Paid' }
-          ].map((r, i) => (
-            <View key={i} style={styles.tr}>
-              <Text style={[styles.td, { flex: 1.5 }]}>{r.date}</Text>
-              <Text style={[styles.td, { flex: 2, color: '#888888' }]}>{r.id}</Text>
-              <Text style={[styles.td, { flex: 1 }]}>{r.amt}</Text>
-              <View style={{ flex: 1 }}>
-                <View style={[styles.statusPill, { backgroundColor: '#F0FBF5' }]}><Text style={[styles.statusText, { color: '#1A7F4B' }]}>{r.stat}</Text></View>
-              </View>
-              <View style={{ width: 30, alignItems: 'flex-end' }}>
-                <Text style={{ fontSize: 16, color: '#888888' }}>↓</Text>
-              </View>
-            </View>
-          ))}
-        </View>
-      </View>
-      
+
       {/* Footer */}
       <View style={styles.footer}>
         <Text style={styles.footerText}>© Auris by Skym Labs</Text>
