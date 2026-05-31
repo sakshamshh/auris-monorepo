@@ -1,11 +1,14 @@
 import React, { useState } from 'react';
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity, TextInput, Dimensions, Platform } from 'react-native';
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity, TextInput, Dimensions, Platform, ActivityIndicator, Alert } from 'react-native';
+import { requestAccess } from '../services/api';
 
 const screenWidth = Dimensions.get('window').width;
 
 export default function SupportScreen({ navigation }) {
   const [name, setName] = useState('');
   const [message, setMessage] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [success, setSuccess] = useState(false);
 
   return (
     <ScrollView style={styles.container} contentContainerStyle={styles.content}>
@@ -47,8 +50,30 @@ export default function SupportScreen({ navigation }) {
           placeholderTextColor="#BBBBBB"
         />
 
-        <TouchableOpacity style={styles.btnPri}>
-          <Text style={styles.btnPriText}>Send Message</Text>
+        <TouchableOpacity 
+          style={styles.btnPri} 
+          onPress={async () => {
+            if (!name || !message) return;
+            setLoading(true);
+            try {
+              await requestAccess(name, message);
+              setSuccess(true);
+              setName('');
+              setMessage('');
+            } catch (e) {
+              if (Platform.OS === 'web') alert('Failed to send message. Please try again.');
+              else Alert.alert('Error', 'Failed to send message. Please try again.');
+            } finally {
+              setLoading(false);
+            }
+          }}
+          disabled={loading || success}
+        >
+          {loading ? (
+            <ActivityIndicator color="#FFFFFF" />
+          ) : (
+            <Text style={styles.btnPriText}>{success ? "Sent Successfully" : "Send Message"}</Text>
+          )}
         </TouchableOpacity>
       </View>
       

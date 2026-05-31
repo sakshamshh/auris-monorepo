@@ -36,6 +36,12 @@ export const requestPasswordReset = async (store_id) => {
   return res.data;
 };
 
+export const requestAccess = async (name, phone) => {
+  // We repurpose the message field for phone in this quick implementation
+  const res = await api.post('/api/auth/request-access', { name, message: phone, store_id: '' });
+  return res.data;
+};
+
 export const logout = async () => {
   await storage.delete('store_id');
   await storage.delete('password');

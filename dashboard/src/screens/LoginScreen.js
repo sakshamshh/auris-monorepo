@@ -3,7 +3,7 @@ import {
   View, Text, TextInput, TouchableOpacity, StyleSheet, 
   ActivityIndicator, KeyboardAvoidingView, Platform, ScrollView 
 } from 'react-native';
-import { login } from '../services/api';
+import { login, requestAccess, requestPasswordReset } from '../services/api';
 
 export default function LoginScreen({ onLogin }) {
   const [storeId, setStoreId] = useState('');
@@ -13,10 +13,14 @@ export default function LoginScreen({ onLogin }) {
 
   const [showForgot, setShowForgot] = useState(false);
   const [resetId, setResetId] = useState('');
+  const [resetLoading, setResetLoading] = useState(false);
+  const [resetSuccess, setResetSuccess] = useState(false);
 
   const [showAccess, setShowAccess] = useState(false);
   const [accessName, setAccessName] = useState('');
   const [accessPhone, setAccessPhone] = useState('');
+  const [accessLoading, setAccessLoading] = useState(false);
+  const [accessSuccess, setAccessSuccess] = useState(false);
 
   const handleLogin = async () => {
     if (!storeId || !password) return;
@@ -81,8 +85,23 @@ export default function LoginScreen({ onLogin }) {
                   onChangeText={setResetId}
                   autoCapitalize="none"
                 />
-                <TouchableOpacity style={styles.secondaryBtn}>
-                  <Text style={styles.secondaryBtnText}>Send Reset Link</Text>
+                <TouchableOpacity 
+                  style={styles.secondaryBtn} 
+                  onPress={async () => {
+                    if (!resetId) return;
+                    setResetLoading(true);
+                    try {
+                      await requestPasswordReset(resetId);
+                      setResetSuccess(true);
+                    } catch (e) {
+                      if (Platform.OS === 'web') alert('Failed to send reset link.');
+                    } finally {
+                      setResetLoading(false);
+                    }
+                  }}
+                  disabled={resetLoading || resetSuccess}
+                >
+                  {resetLoading ? <ActivityIndicator color="#111111" /> : <Text style={styles.secondaryBtnText}>{resetSuccess ? "Reset Link Sent" : "Send Reset Link"}</Text>}
                 </TouchableOpacity>
               </View>
             )}
@@ -109,8 +128,25 @@ export default function LoginScreen({ onLogin }) {
                 <Text style={[styles.label, { marginTop: 12, marginBottom: 4 }]}>Phone</Text>
                 <TextInput style={styles.input} value={accessPhone} onChangeText={setAccessPhone} keyboardType="phone-pad" />
                 
-                <TouchableOpacity style={[styles.secondaryBtn, { marginTop: 16 }]}>
-                  <Text style={styles.secondaryBtnText}>Submit Request</Text>
+                <TouchableOpacity 
+                  style={[styles.secondaryBtn, { marginTop: 16 }]}
+                  onPress={async () => {
+                    if (!accessName || !accessPhone) return;
+                    setAccessLoading(true);
+                    try {
+                      await requestAccess(accessName, accessPhone);
+                      setAccessSuccess(true);
+                      setAccessName('');
+                      setAccessPhone('');
+                    } catch (e) {
+                      if (Platform.OS === 'web') alert('Failed to request access.');
+                    } finally {
+                      setAccessLoading(false);
+                    }
+                  }}
+                  disabled={accessLoading || accessSuccess}
+                >
+                  {accessLoading ? <ActivityIndicator color="#111111" /> : <Text style={styles.secondaryBtnText}>{accessSuccess ? "Request Sent" : "Submit Request"}</Text>}
                 </TouchableOpacity>
                 <Text style={styles.helperText}>We'll set up your account and send credentials.</Text>
               </View>
